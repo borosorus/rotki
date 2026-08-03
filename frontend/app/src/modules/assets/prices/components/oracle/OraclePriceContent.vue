@@ -76,6 +76,7 @@ const sourceLabels: Record<string, string> = {
   [PriceOracle.BLOCKCHAIN]: 'Blockchain',
   [PriceOracle.COINGECKO]: 'CoinGecko',
   [PriceOracle.CRYPTOCOMPARE]: 'CryptoCompare',
+  [PriceOracle.CUSTOMCURRENT]: 'Custom formula',
   [PriceOracle.DEFILLAMA]: 'DefiLlama',
   [PriceOracle.FIAT]: 'Fiat',
   [PriceOracle.MANUAL]: 'Manual',
@@ -99,6 +100,7 @@ type ChipColor = 'grey' | 'primary' | 'secondary' | 'error' | 'warning' | 'info'
 
 const sourceContextColors: Record<string, ChipColor> = {
   [PriceOracle.BLOCKCHAIN]: 'secondary',
+  [PriceOracle.CUSTOMCURRENT]: 'warning',
   [PriceOracle.MANUAL]: 'warning',
   [PriceOracle.MANUALCURRENT]: 'warning',
 };

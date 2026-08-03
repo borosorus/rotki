@@ -5122,6 +5122,7 @@
     }
   },
   "oracles": {
+    "custom_current": "Custom on-chain formula",
     "manual_current": "Custom price",
     "uniswap_v2": "Uniswap V2",
     "uniswap_v3": "Uniswap V3"

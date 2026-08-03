@@ -59,6 +59,13 @@ def test_custom_price_expression(expression: str, expected: FVal) -> None:
     assert evaluate_expression(expression, {'first': FVal(3), 'second': FVal(2)}) == expected
 
 
+def test_custom_price_expression_preserves_literal_precision() -> None:
+    assert evaluate_expression(
+        'first * 0.12345678901234567890123456789',
+        {'first': FVal(1)},
+    ) == FVal('0.12345678901234567890123456789')
+
+
 @pytest.mark.parametrize(('expression', 'error'), [
     ('unknown + 1', 'Unknown expression variable'),
     ('first / 0', 'Division by zero'),
@@ -94,6 +101,7 @@ def test_custom_current_price_oracle(database, inquirer) -> None:
     Inquirer._evm_managers[formula.asset.chain_id] = manager
     oracle = CustomCurrentPriceOracle()
     oracle.set_database(database)
+    quote_asset = A_USDC.resolve_to_asset_with_oracles()
 
     with patch.object(Inquirer, 'find_price', return_value=FVal(2)) as conversion_mock:
         evaluation = oracle.evaluate_formula(formula=formula, target_asset=A_USD)
@@ -103,9 +111,37 @@ def test_custom_current_price_oracle(database, inquirer) -> None:
     assert node_inquirer.call_contract.call_args.kwargs['arguments'] == [10 ** 18]
     conversion_mock.assert_called_once_with(from_asset=A_USDC, to_asset=A_USD)
 
-    assert oracle.query_current_price(formula.asset, A_USDC) == FVal('1.0342')
-    oracle.processing_pairs.add((formula.asset, A_USDC))
-    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+    assert oracle.query_current_price(formula.asset, quote_asset) == FVal('1.0342')
+    oracle.processing_pairs.add((formula.asset, quote_asset))
+    assert oracle.query_current_price(formula.asset, quote_asset) == ZERO_PRICE
+
+    with (
+        patch.object(Inquirer, 'find_price', return_value=ZERO_PRICE),
+        pytest.raises(CustomPriceFormulaError, match='Could not convert'),
+    ):
+        oracle.evaluate_formula(formula=formula, target_asset=A_USD)
+
+
+def test_custom_current_price_oracle_multiple_calls(inquirer) -> None:
+    base_formula = make_formula()
+    formula = CustomPriceFormula(
+        asset=base_formula.asset,
+        quote_asset=base_formula.quote_asset,
+        expression='assets_per_share * multiplier',
+        calls=(*base_formula.calls, ContractCallDefinition(
+            name='multiplier',
+            address=base_formula.calls[0].address,
+            method='multiplier()',
+            arguments=(),
+            output_type='int256',
+            output_decimals=0,
+        )),
+        enabled=True,
+    )
+    manager = MagicMock()
+    manager.node_inquirer.call_contract.side_effect = [1034200, 2]
+    Inquirer._evm_managers[formula.asset.chain_id] = manager
+    assert CustomCurrentPriceOracle().evaluate_formula(formula).price == FVal('2.0684')
 
 
 @pytest.mark.parametrize('result', [b'', True, (42,)])
@@ -116,22 +152,30 @@ def test_custom_current_price_oracle_malformed_result(database, inquirer, result
     Inquirer._evm_managers[formula.asset.chain_id] = manager
     oracle = CustomCurrentPriceOracle()
     oracle.set_database(database)
-    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+    assert oracle.query_current_price(
+        formula.asset,
+        A_USDC.resolve_to_asset_with_oracles(),
+    ) == ZERO_PRICE
 
 
 def test_custom_current_price_oracle_fallback_cases(database, inquirer) -> None:
     oracle = CustomCurrentPriceOracle()
     oracle.set_database(database)
-    assert oracle.query_current_price(A_WETH.resolve_to_evm_token(), A_USDC) == ZERO_PRICE
+    quote_asset = A_USDC.resolve_to_asset_with_oracles()
+    assert oracle.query_current_price(A_WETH.resolve_to_evm_token(), quote_asset) == ZERO_PRICE
 
     DBCustomPriceFormulas(database).upsert(formula := make_formula(enabled=False))
-    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+    assert oracle.query_current_price(formula.asset, quote_asset) == ZERO_PRICE
 
     DBCustomPriceFormulas(database).upsert(formula := make_formula())
     manager = MagicMock()
     manager.node_inquirer.call_contract.side_effect = RemoteError('Contract call reverted')
     Inquirer._evm_managers[formula.asset.chain_id] = manager
-    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+    assert oracle.query_current_price(formula.asset, quote_asset) == ZERO_PRICE
+
+    Inquirer._evm_managers.pop(formula.asset.chain_id)
+    with pytest.raises(CustomPriceFormulaError, match='No EVM manager'):
+        oracle.evaluate_formula(formula)
 
 
 def test_custom_price_oracle_priority(inquirer) -> None:

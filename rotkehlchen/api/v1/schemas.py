@@ -130,6 +130,14 @@ from rotkehlchen.history.events.utils import (
 from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.icons import ALLOWED_ICON_EXTENSIONS
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.oracles.custom_price import (
+    FORMULA_VERSION,
+    ContractCallDefinition,
+    CustomPriceFormula,
+    CustomPriceFormulaError,
+    deserialize_call_definition,
+    validate_custom_price_formula,
+)
 from rotkehlchen.oracles.structures import SETTABLE_CURRENT_PRICE_ORACLES
 from rotkehlchen.serialization.deserialize import (
     deserialize_btc_tx_id,
@@ -3407,6 +3415,70 @@ class ManualPriceSchema(Schema):
                 message='The from and to assets must be different',
                 field_name='from_asset',
             )
+
+
+class ContractCallDefinitionSchema(Schema):
+    name = NonEmptyStringField(required=True)
+    address = EvmAddressField(required=True)
+    method = NonEmptyStringField(required=True)
+    arguments = fields.List(fields.Raw(), required=True)
+    output_type = NonEmptyStringField(required=True)
+    output_decimals = fields.Integer(
+        strict=True,
+        required=True,
+        validate=validate.Range(min=0, max=255),
+    )
+
+    @post_load
+    def make_call(self, data: dict[str, Any], **_kwargs: Any) -> ContractCallDefinition:
+        try:
+            return deserialize_call_definition(data)
+        except CustomPriceFormulaError as e:
+            raise ValidationError(str(e)) from e
+
+
+class CustomPriceFormulaBaseSchema(Schema):
+    asset = AssetField(expected_type=EvmToken, required=True)
+    quote_asset = AssetField(expected_type=Asset, required=True)
+    expression = NonEmptyStringField(required=True)
+    calls = fields.List(
+        fields.Nested(ContractCallDefinitionSchema),
+        required=True,
+        validate=validate.Length(min=1),
+    )
+    enabled = fields.Boolean(load_default=True)
+    version = fields.Integer(
+        strict=True,
+        load_default=FORMULA_VERSION,
+        validate=validate.Equal(FORMULA_VERSION),
+    )
+
+    def make_formula(self, data: dict[str, Any]) -> CustomPriceFormula:
+        formula = CustomPriceFormula(calls=tuple(data.pop('calls')), **data)
+        try:
+            validate_custom_price_formula(formula)
+        except CustomPriceFormulaError as e:
+            raise ValidationError(str(e)) from e
+        return formula
+
+
+class CustomPriceFormulaSchema(CustomPriceFormulaBaseSchema):
+    @post_load
+    def load_formula(self, data: dict[str, Any], **_kwargs: Any) -> dict[str, CustomPriceFormula]:
+        return {'formula': self.make_formula(data)}
+
+
+class CustomPriceFormulaTestSchema(CustomPriceFormulaBaseSchema):
+    target_asset = AssetField(expected_type=Asset, load_default=None)
+
+    @post_load
+    def load_formula_test(self, data: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        target_asset = data.pop('target_asset')
+        return {'formula': self.make_formula(data), 'target_asset': target_asset}
+
+
+class CustomPriceFormulaDeleteSchema(Schema):
+    asset = AssetField(expected_type=EvmToken, required=True)
 
 
 class TimedManualPriceSchema(ManualPriceSchema):

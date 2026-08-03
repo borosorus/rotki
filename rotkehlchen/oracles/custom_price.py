@@ -24,7 +24,7 @@ from rotkehlchen.utils.interfaces import DBSetterMixin
 if TYPE_CHECKING:
     from eth_typing.abi import ABI
 
-    from rotkehlchen.assets.asset import Asset, EvmToken
+    from rotkehlchen.assets.asset import Asset, AssetWithOracles, EvmToken
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.types import ChecksumEvmAddress
 
@@ -43,11 +43,13 @@ class CustomPriceFormulaError(Exception):
             stage: Literal['validation', 'call', 'expression', 'conversion'] = 'validation',
             call: str | None = None,
             address: ChecksumEvmAddress | None = None,
+            completed_calls: tuple[dict[str, str | int], ...] = (),
     ) -> None:
         super().__init__(message)
         self.stage = stage
         self.call = call
         self.address = address
+        self.completed_calls = completed_calls
 
 
 @dataclass(frozen=True)
@@ -228,7 +230,7 @@ def validate_expression(expression: str, variables: set[str]) -> None:
             f'Invalid expression: {e.msg}',
             stage='expression',
         ) from e
-    _evaluate_node(tree.body, variables=variables, values=None)
+    _evaluate_node(tree.body, variables=variables, values=None, source=expression)
 
 
 def evaluate_expression(expression: str, values: dict[str, FVal]) -> FVal:
@@ -240,7 +242,12 @@ def evaluate_expression(expression: str, values: dict[str, FVal]) -> FVal:
             stage='expression',
         ) from e
 
-    result = _evaluate_node(tree.body, variables=set(values), values=values)
+    result = _evaluate_node(
+        tree.body,
+        variables=set(values),
+        values=values,
+        source=expression,
+    )
     if result is None:
         raise CustomPriceFormulaError('Expression did not produce a value', stage='expression')
     if result.num.is_finite() is False:
@@ -257,12 +264,14 @@ def _evaluate_node(
         node: ast.AST,
         variables: set[str],
         values: dict[str, FVal] | None,
+        source: str,
 ) -> FVal | None:
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool) or not isinstance(node.value, int | float):
             raise CustomPriceFormulaError('Only numeric literals are allowed', stage='expression')
         try:
-            return FVal(str(node.value)) if values is not None else None
+            return FVal(ast.get_source_segment(source, node) or str(node.value)) \
+                if values is not None else None
         except ValueError as e:
             raise CustomPriceFormulaError('Invalid numeric literal', stage='expression') from e
 
@@ -275,14 +284,14 @@ def _evaluate_node(
         return values[node.id] if values is not None else None
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
-        operand = _evaluate_node(node.operand, variables, values)
+        operand = _evaluate_node(node.operand, variables, values, source)
         if operand is None:
             return None
         return operand if isinstance(node.op, ast.UAdd) else -operand
 
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add | ast.Sub | ast.Mult | ast.Div):
-        left = _evaluate_node(node.left, variables, values)
-        right = _evaluate_node(node.right, variables, values)
+        left = _evaluate_node(node.left, variables, values, source)
+        right = _evaluate_node(node.right, variables, values, source)
         if values is None:
             return None
         assert left is not None and right is not None
@@ -306,7 +315,7 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
     def __init__(self) -> None:
         super().__init__(oracle_name='custom current price oracle')
         self.db: DBHandler | None = None
-        self.processing_pairs: set[tuple[Asset, Asset]] = set()
+        self.processing_pairs: set[tuple[AssetWithOracles, AssetWithOracles]] = set()
 
     def _get_name(self) -> str:
         return self.name
@@ -361,6 +370,7 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
                     stage='call',
                     call=call.name,
                     address=call.address,
+                    completed_calls=tuple(result.serialize() for result in call_results),
                 ) from e
             if isinstance(raw_value, bool) or not isinstance(raw_value, int):
                 raise CustomPriceFormulaError(
@@ -368,6 +378,7 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
                     stage='call',
                     call=call.name,
                     address=call.address,
+                    completed_calls=tuple(result.serialize() for result in call_results),
                 )
             normalized_value = FVal(raw_value) / FVal(10 ** call.output_decimals)
             values[call.name] = normalized_value
@@ -380,10 +391,14 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
 
         try:
             formula_price = Price(evaluate_expression(formula.expression, values))
+        except CustomPriceFormulaError as e:
+            e.completed_calls = tuple(result.serialize() for result in call_results)
+            raise
         except (DecimalException, OverflowError) as e:
             raise CustomPriceFormulaError(
                 f'Expression arithmetic failed: {e!s}',
                 stage='expression',
+                completed_calls=tuple(result.serialize() for result in call_results),
             ) from e
 
         if (target := target_asset or formula.quote_asset) == formula.quote_asset:
@@ -395,6 +410,7 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
             raise CustomPriceFormulaError(
                 f'Could not convert {formula.quote_asset} to {target}',
                 stage='conversion',
+                completed_calls=tuple(result.serialize() for result in call_results),
             )
         else:
             price = Price(formula_price * conversion_price)
@@ -408,8 +424,8 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
 
     def query_current_price(
             self,
-            from_asset: Asset,
-            to_asset: Asset,
+            from_asset: AssetWithOracles,
+            to_asset: AssetWithOracles,
     ) -> Price:
         return self.query_multiple_current_prices(
             from_assets=[from_asset],
@@ -418,15 +434,15 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
 
     def query_multiple_current_prices(
             self,
-            from_assets: list[Asset],
-            to_asset: Asset,
-    ) -> dict[Asset, Price]:
+            from_assets: list[AssetWithOracles],
+            to_asset: AssetWithOracles,
+    ) -> dict[AssetWithOracles, Price]:
         if self.db is None:
             return {}
         from rotkehlchen.db.custom_price_formulas import DBCustomPriceFormulas
 
         try:
-            formulas = {
+            formulas: dict[AssetWithOracles, CustomPriceFormula] = {
                 formula.asset: formula
                 for formula in DBCustomPriceFormulas(self.db).get()
                 if formula.enabled is True
@@ -435,7 +451,7 @@ class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
             log.error('Failed to read custom price formulas from the user database due to %s', e)
             return {}
 
-        prices: dict[Asset, Price] = {}
+        prices: dict[AssetWithOracles, Price] = {}
         for from_asset in from_assets:
             if (formula := formulas.get(from_asset)) is None:
                 continue

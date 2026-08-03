@@ -35,6 +35,7 @@ export function useOracleInfo(options: OracleInfoOptions): OracleInfoReturn {
 
     const oracleKey = getAssetPriceOracle(toValue(priceAsset));
     const mapping: Record<string, string> = {
+      [PriceOracle.CUSTOMCURRENT]: t('oracles.custom_current'),
       [PriceOracle.MANUALCURRENT]: t('oracles.manual_current'),
       [PriceOracle.UNISWAP2]: t('oracles.uniswap_v2'),
       [PriceOracle.UNISWAP3]: t('oracles.uniswap_v3'),

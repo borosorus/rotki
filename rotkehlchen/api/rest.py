@@ -262,6 +262,7 @@ if TYPE_CHECKING:
     from rotkehlchen.history.data_issues.types import DataIssue
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
     from rotkehlchen.history.types import HistoricalPriceOracle
+    from rotkehlchen.oracles.custom_price import CustomPriceFormula
     from rotkehlchen.rotkehlchen import Rotkehlchen
 
 
@@ -2789,6 +2790,25 @@ class RestAPI:
             to_asset=to_asset,
         )
         return make_response_from_dict(response_data)
+
+    def get_custom_price_formulas(self) -> Response:
+        return make_response_from_dict(self.assets_service.get_custom_price_formulas())
+
+    def upsert_custom_price_formula(self, formula: CustomPriceFormula) -> Response:
+        return make_response_from_dict(self.assets_service.upsert_custom_price_formula(formula))
+
+    def delete_custom_price_formula(self, asset: EvmToken) -> Response:
+        return make_response_from_dict(self.assets_service.delete_custom_price_formula(asset))
+
+    def test_custom_price_formula(
+            self,
+            formula: CustomPriceFormula,
+            target_asset: Asset | None,
+    ) -> Response:
+        return make_response_from_dict(self.assets_service.test_custom_price_formula(
+            formula=formula,
+            target_asset=target_asset,
+        ))
 
     @async_api_call()
     def get_nfts_with_price(self, lps_handling: NftLpHandling) -> dict[str, Any]:

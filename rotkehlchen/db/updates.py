@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from collections.abc import Sequence  # noqa: TC003  # needed by autospec on Python 3.14
 from typing import TYPE_CHECKING, Any, Literal
 
 import requests
@@ -40,7 +41,7 @@ from rotkehlchen.utils.network import query_file
 from rotkehlchen.utils.version_check import get_current_version
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
     from rotkehlchen.db.dbhandler import DBCursor, DBHandler
     from rotkehlchen.user_messages import MessagesAggregator

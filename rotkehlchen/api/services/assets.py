@@ -57,6 +57,7 @@ from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.constants.timing import ENS_AVATARS_REFRESH
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.custom_assets import DBCustomAssets
+from rotkehlchen.db.custom_price_formulas import DBCustomPriceFormulas
 from rotkehlchen.db.ens import DBEns
 from rotkehlchen.db.search_assets import search_assets_levenshtein
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
@@ -74,6 +75,10 @@ from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.history.types import NOT_EXPOSED_SOURCES, HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.icons import check_if_image_is_cached, maybe_create_image_response
 from rotkehlchen.inquirer import CurrentPriceOracle, Inquirer
+from rotkehlchen.oracles.custom_price import (
+    CustomPriceFormula,
+    CustomPriceFormulaError,
+)
 from rotkehlchen.serialization.serialize import process_result, process_result_list
 from rotkehlchen.tasks.assets import (
     update_aave_v3_underlying_assets,
@@ -891,6 +896,68 @@ class AssetsService:
             } for nft_data in nft_price_data])
 
         return {'result': prices_information, 'message': '', 'status_code': HTTPStatus.OK}
+
+    def get_custom_price_formulas(self) -> dict[str, Any]:
+        formulas = DBCustomPriceFormulas(self.rotkehlchen.data.db).get()
+        return {
+            'result': [formula.serialize() for formula in formulas],
+            'message': '',
+            'status_code': HTTPStatus.OK,
+        }
+
+    def upsert_custom_price_formula(self, formula: CustomPriceFormula) -> dict[str, Any]:
+        DBCustomPriceFormulas(self.rotkehlchen.data.db).upsert(formula)
+        Inquirer._cached_current_price.clear()
+        return {
+            'result': formula.serialize(),
+            'message': '',
+            'status_code': HTTPStatus.OK,
+        }
+
+    def delete_custom_price_formula(self, asset: EvmToken) -> dict[str, Any]:
+        if DBCustomPriceFormulas(self.rotkehlchen.data.db).delete(asset) is False:
+            return {
+                'result': None,
+                'message': f'No custom price formula was found for {asset}',
+                'status_code': HTTPStatus.NOT_FOUND,
+            }
+        Inquirer._cached_current_price.clear()
+        return {'result': True, 'message': '', 'status_code': HTTPStatus.OK}
+
+    def test_custom_price_formula(
+            self,
+            formula: CustomPriceFormula,
+            target_asset: Asset | None,
+    ) -> dict[str, Any]:
+        try:
+            evaluation = Inquirer._customcurrent.evaluate_formula(
+                formula=formula,
+                target_asset=target_asset,
+            )
+        except CustomPriceFormulaError as e:
+            result: dict[str, Any] = {
+                'success': False,
+                'stage': e.stage,
+                'error': str(e),
+                'calls': list(e.completed_calls),
+            }
+            if e.call is not None:
+                result['call'] = e.call
+            if e.address is not None:
+                result['address'] = e.address
+            return {'result': result, 'message': '', 'status_code': HTTPStatus.OK}
+
+        return {
+            'result': {
+                'success': True,
+                'price': str(evaluation.price),
+                'target_asset': evaluation.target_asset.identifier,
+                'quote_asset': evaluation.quote_asset.identifier,
+                'calls': [result.serialize() for result in evaluation.calls],
+            },
+            'message': '',
+            'status_code': HTTPStatus.OK,
+        }
 
     def get_nfts_with_price(self, lps_handling: NftLpHandling) -> dict[str, Any]:
         return self._eth_module_query(

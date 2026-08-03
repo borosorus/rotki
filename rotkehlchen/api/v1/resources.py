@@ -74,6 +74,9 @@ from rotkehlchen.api.v1.schemas import (
     CustomAssetsQuerySchema,
     CustomizedEventDuplicatesFixSchema,
     CustomizedEventDuplicatesIgnoreSchema,
+    CustomPriceFormulaDeleteSchema,
+    CustomPriceFormulaSchema,
+    CustomPriceFormulaTestSchema,
     DataImportSchema,
     DataIssueManualResolveSchema,
     DataIssuesFilterSchema,
@@ -324,6 +327,7 @@ if TYPE_CHECKING:
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryBaseEntryType
     from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
     from rotkehlchen.history.types import HistoricalPriceOracle
+    from rotkehlchen.oracles.custom_price import CustomPriceFormula
 
 
 def _combine_parser_data(
@@ -2626,6 +2630,37 @@ class AllLatestAssetsPriceResource(BaseMethodView):
     @use_kwargs(post_schema, location='json')
     def post(self, from_asset: Asset | None, to_asset: Asset | None) -> Response:
         return self.rest_api.get_manual_latest_prices(from_asset=from_asset, to_asset=to_asset)
+
+
+class CustomPriceFormulasResource(BaseMethodView):
+    put_schema = CustomPriceFormulaSchema()
+    delete_schema = CustomPriceFormulaDeleteSchema()
+
+    @require_loggedin_user()
+    def get(self) -> Response:
+        return self.rest_api.get_custom_price_formulas()
+
+    @require_loggedin_user()
+    @use_kwargs(put_schema, location='json')
+    def put(self, formula: CustomPriceFormula) -> Response:
+        return self.rest_api.upsert_custom_price_formula(formula)
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='json')
+    def delete(self, asset: EvmToken) -> Response:
+        return self.rest_api.delete_custom_price_formula(asset)
+
+
+class CustomPriceFormulaTestResource(BaseMethodView):
+    post_schema = CustomPriceFormulaTestSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(self, formula: CustomPriceFormula, target_asset: Asset | None) -> Response:
+        return self.rest_api.test_custom_price_formula(
+            formula=formula,
+            target_asset=target_asset,
+        )
 
 
 class LatestAssetsPriceResource(BaseMethodView):

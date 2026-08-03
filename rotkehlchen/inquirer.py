@@ -730,7 +730,9 @@ class Inquirer:
             from_assets: list[Asset],
             to_asset: Asset,
     ) -> tuple[list[Asset], dict[Asset, tuple[Price, CurrentPriceOracle]]]:
-        found_prices = {}
+        found_prices: dict[Asset, tuple[Price, CurrentPriceOracle]] = {}
+        prices: dict[Asset, Price]
+        unpriced_assets: list[Asset]
         prices, unpriced_assets = Inquirer._try_oracle_price_query(  # type: ignore[assignment]
             oracle=CurrentPriceOracle.CUSTOMCURRENT,
             oracle_instance=Inquirer._customcurrent,

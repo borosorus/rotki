@@ -30,6 +30,7 @@ const labels: { [keys in PrioritizedListId]: string } = {
   [PriceOracle.BLOCKCHAIN]: '',
   [PriceOracle.COINGECKO]: '',
   [PriceOracle.CRYPTOCOMPARE]: '',
+  [PriceOracle.CUSTOMCURRENT]: t('oracles.custom_current'),
   [PriceOracle.DEFILLAMA]: '',
   [PriceOracle.FIAT]: '',
   [PriceOracle.KRAKEN]: '',
