@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { CustomPriceFormulaTestResult } from './types';
+import { bigNumberify } from '@rotki/common';
+import { ValueDisplay } from '@/modules/assets/amount-display/components';
 import AssetDetails from '@/modules/assets/AssetDetails.vue';
 import SimpleTable from '@/modules/shell/components/SimpleTable.vue';
 
@@ -21,7 +23,8 @@ const { t } = useI18n({ useScope: 'global' });
     </RuiAlert>
     <RuiAlert :type="result.success ? 'success' : 'error'">
       <template v-if="result.success">
-        {{ t('custom_price_formulas.test.success', { price: result.price }) }}
+        {{ t('custom_price_formulas.test.success') }}:
+        <ValueDisplay :value="bigNumberify(result.price)" />
         <span class="inline-flex align-middle ml-1">
           <AssetDetails
             :asset="result.targetAsset"
@@ -59,11 +62,14 @@ const { t } = useI18n({ useScope: 'global' });
               {{ call.address }}
             </div>
           </td>
-          <td class="font-mono break-all">
-            {{ call.rawValue }}
+          <td class="break-all">
+            <ValueDisplay
+              :value="bigNumberify(call.rawValue)"
+              :format="{ integer: true }"
+            />
           </td>
           <td>
-            {{ call.normalizedValue }}
+            <ValueDisplay :value="bigNumberify(call.normalizedValue)" />
           </td>
         </tr>
       </tbody>

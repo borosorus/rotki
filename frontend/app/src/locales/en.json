@@ -2387,12 +2387,13 @@
     },
     "test": {
       "action": "Test formula",
-      "description": "Execute the read-only contract calls without saving. Select a target asset to also test quote conversion.",
+      "conversion_help": "By default, the test returns the formula result in its configured quote asset. Select another asset to also verify that rotki can convert the quote asset into it. This selection is only used for the test and is not saved with the formula.",
+      "description": "Execute the read-only contract calls without saving. Conversion into another asset can be tested separately.",
       "normalized_value": "Normalized value",
       "raw_value": "Raw value",
       "stale": "This result is from an earlier version of the formula.",
-      "success": "Formula price: {price}",
-      "target_asset": "Optional conversion target",
+      "success": "Formula price",
+      "target_asset": "Convert test result to (optional)",
       "title": "Test formula"
     }
   },

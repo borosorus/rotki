@@ -2,6 +2,7 @@
 import type { CustomPriceFormula, CustomPriceFormulaTestResult } from './types';
 import { type AssetInfoWithId, getAddressFromEvmIdentifier } from '@rotki/common';
 import { EVM_TOKEN } from '@/modules/assets/types';
+import HintMenuIcon from '@/modules/shell/components/HintMenuIcon.vue';
 import AssetSelect from '@/modules/shell/components/inputs/AssetSelect.vue';
 import CustomPriceCallCard from './CustomPriceCallCard.vue';
 import CustomPriceFormulaTestResultContent from './CustomPriceFormulaTestResult.vue';
@@ -161,8 +162,13 @@ defineExpose({ validate });
     <RuiDivider />
 
     <div>
-      <div class="text-h6 mb-1">
-        {{ t('custom_price_formulas.test.title') }}
+      <div class="flex items-center gap-1 mb-1">
+        <div class="text-h6">
+          {{ t('custom_price_formulas.test.title') }}
+        </div>
+        <HintMenuIcon>
+          {{ t('custom_price_formulas.test.conversion_help') }}
+        </HintMenuIcon>
       </div>
       <div class="text-body-2 text-rui-text-secondary mb-3">
         {{ t('custom_price_formulas.test.description') }}
