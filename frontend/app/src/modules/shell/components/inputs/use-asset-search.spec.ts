@@ -41,13 +41,14 @@ interface Harness {
   modelValue: Ref<string | undefined>;
 }
 
-function setup(opts: { modelValue?: string; chain?: string; showIgnored?: boolean; excludes?: string[] } = {}): Harness {
+function setup(opts: { modelValue?: string; chain?: string; showIgnored?: boolean; excludes?: string[]; assetTypes?: string[] } = {}): Harness {
   const modelValue = ref<string | undefined>(opts.modelValue);
   const chain = ref<string | undefined>(opts.chain);
   let api!: ReturnType<typeof useAssetSearch>;
   mount(defineComponent({
     setup() {
       api = useAssetSearch({
+        assetTypes: () => opts.assetTypes ?? [],
         chain,
         excludes: () => opts.excludes ?? [],
         includeNfts: () => false,
@@ -89,6 +90,18 @@ describe('useAssetSearch', () => {
 
     expect(mockAssetSearch).toHaveBeenCalledWith(expect.objectContaining({ evmChain: 'ethereum' }));
     expect(get(api.visibleAssets)).toHaveLength(1);
+  });
+
+  it('should restrict results to the allowed asset types', async () => {
+    mockAssetSearch.mockResolvedValue([
+      makeAsset('TOKEN'),
+      { ...makeAsset('FIAT'), assetType: 'fiat' },
+    ]);
+    const { api } = setup({ assetTypes: ['evm token'] });
+
+    await runSearch(api, 'asset');
+
+    expect(get(api.visibleAssets).map(asset => asset.identifier)).toEqual(['TOKEN']);
   });
 
   it('should hide ignored assets unless they are the selected value', async () => {

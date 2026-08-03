@@ -2338,6 +2338,64 @@
     "hint": "Select as the main currency",
     "profit_currency": "Profit Currency ({currency})"
   },
+  "custom_price_formulas": {
+    "actions": {
+      "add": "Add formula"
+    },
+    "delete": {
+      "message": "Are you sure you want to delete this custom price formula?",
+      "title": "Delete custom price formula"
+    },
+    "dialog": {
+      "add_title": "Add custom price formula",
+      "edit_title": "Edit custom price formula"
+    },
+    "form": {
+      "add_call": "Add contract call",
+      "arguments": "Arguments",
+      "call_name": "Result name",
+      "call_title": "Contract call {number}",
+      "contract_address": "Contract address",
+      "enabled": "Use this formula as a current-price override",
+      "expression": "Price expression",
+      "expression_hint": "Available call results: {variables}",
+      "literal": "Literal integer",
+      "literal_value": "Integer value",
+      "method": "Function signature",
+      "method_hint": "For example: convertToAssets(uint256)",
+      "one_token": "One target token",
+      "one_token_hint": "Uses 10 raised to the target token's decimals.",
+      "output_decimals": "Output decimals",
+      "output_type": "Output type",
+      "quote_asset": "Quote asset",
+      "remove_call": "Remove contract call",
+      "target_asset": "Target EVM token"
+    },
+    "messages": {
+      "delete_title": "Could not delete custom price formula",
+      "fetch_title": "Could not load custom price formulas",
+      "save_title": "Could not save custom price formula",
+      "test_title": "Could not test custom price formula"
+    },
+    "table": {
+      "call": "Call",
+      "calls": "Calls",
+      "enabled": "Enabled",
+      "expression": "Expression",
+      "quote_asset": "Quote asset",
+      "target_asset": "Target asset"
+    },
+    "test": {
+      "action": "Test formula",
+      "description": "Execute the read-only contract calls without saving. Select a target asset to also test quote conversion.",
+      "normalized_value": "Normalized value",
+      "raw_value": "Raw value",
+      "stale": "This result is from an earlier version of the formula.",
+      "success": "Formula price: {price}",
+      "target_asset": "Optional conversion target",
+      "title": "Test formula"
+    }
+  },
   "customized_event_duplicates": {
     "actions": {
       "fix": "Auto Fix",
@@ -4765,6 +4823,7 @@
     },
     "manage_prices": "Manage Prices",
     "manage_prices_sub": {
+      "custom_formulas": "Custom Formulas",
       "historic_prices": "Historic Prices",
       "latest_prices": "Latest Prices",
       "oracle_prices": "Oracle Prices"

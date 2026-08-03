@@ -23,6 +23,8 @@ interface UseAssetSearchOptions {
   excludes?: MaybeRefOrGetter<string[]>;
   /** Includes NFTs in the search results. */
   includeNfts?: MaybeRefOrGetter<boolean>;
+  /** Restricts results to these backend asset type labels. */
+  assetTypes?: MaybeRefOrGetter<string[]>;
 }
 
 interface UseAssetSearchReturn {
@@ -35,6 +37,10 @@ interface UseAssetSearchReturn {
   preload: (keyword: string) => Promise<void>;
 }
 
+function isAllowedAssetType(assetType: string | undefined, allowedAssetTypes: string[]): boolean {
+  return allowedAssetTypes.length === 0 || (!!assetType && allowedAssetTypes.includes(assetType));
+}
+
 /**
  * Owns the asset search for the asset picker: the debounced, chain-scoped remote search, the
  * cached option list and its ignored/items/excludes filtering, and keeping the selected value in
@@ -42,7 +48,7 @@ interface UseAssetSearchReturn {
  * autocomplete.
  */
 export function useAssetSearch(options: UseAssetSearchOptions): UseAssetSearchReturn {
-  const { chain, excludes, includeNfts, items, modelValue, showIgnored } = options;
+  const { assetTypes, chain, excludes, includeNfts, items, modelValue, showIgnored } = options;
 
   const { isAssetIgnored } = useAssetsStore();
   const { getEvmChainName, matchChain } = useSupportedChains();
@@ -60,16 +66,20 @@ export function useAssetSearch(options: UseAssetSearchOptions): UseAssetSearchRe
     const ignoredVisible = toValue(showIgnored) ?? false;
     const includeList = toValue(items) ?? [];
     const excludeList = toValue(excludes) ?? [];
+    const allowedAssetTypes = toValue(assetTypes) ?? [];
 
-    const filtered = knownAssets.filter(({ identifier }: AssetInfoWithId) => {
+    const filtered = knownAssets.filter(({ assetType, identifier }: AssetInfoWithId) => {
       const isCurrentValue = identifier === currentValue;
       const unIgnored = ignoredVisible || isCurrentValue || !isAssetIgnored(identifier);
       const included = includeList.length > 0 ? includeList.includes(identifier) : true;
       const excluded = excludeList.length > 0
         ? excludeList.some(excludedId => identifier.toLowerCase() === excludedId?.toLowerCase())
         : false;
-
-      return !!identifier && unIgnored && included && !excluded;
+      return !!identifier
+        && unIgnored
+        && included
+        && !excluded
+        && isAllowedAssetType(assetType, allowedAssetTypes);
     });
 
     return uniqueObjects<AssetInfoWithId>(filtered, item => item.identifier);

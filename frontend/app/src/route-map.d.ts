@@ -315,6 +315,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/price-manager/custom-formulas/': RouteRecordInfo<
+      '/price-manager/custom-formulas/',
+      '/price-manager/custom-formulas',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/price-manager/historic/': RouteRecordInfo<
       '/price-manager/historic/',
       '/price-manager/historic',
@@ -853,6 +860,14 @@ declare module 'vue-router/auto-routes' {
     'src/pages/price-manager/index.vue': {
       routes:
         | '/price-manager/'
+      views:
+        | never
+      pathParamNames:
+        | never
+    }
+    'src/pages/price-manager/custom-formulas/index.vue': {
+      routes:
+        | '/price-manager/custom-formulas/'
       views:
         | never
       pathParamNames:

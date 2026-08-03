@@ -33,6 +33,7 @@ const {
   required = false,
   showIgnored = false,
   successMessages = '',
+  assetTypes = [],
 } = defineProps<{
   items?: string[];
   excludes?: string[];
@@ -48,6 +49,7 @@ const {
   hideDetails?: boolean;
   includeNfts?: boolean;
   chain?: string;
+  assetTypes?: string[];
 }>();
 
 defineSlots<{
@@ -57,6 +59,7 @@ defineSlots<{
 const { t } = useI18n({ useScope: 'global' });
 
 const { error, getVisibleAsset, loading, modelSearch, visibleAssets } = useAssetSearch({
+  assetTypes: () => assetTypes,
   chain: () => chain,
   excludes: () => excludes,
   includeNfts: () => includeNfts,
