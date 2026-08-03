@@ -26,6 +26,7 @@ from rotkehlchen.externalapis.moralis import Moralis
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.manual_price_oracles import ManualCurrentOracle
 from rotkehlchen.inquirer import Inquirer
+from rotkehlchen.oracles.custom_price import CustomCurrentPriceOracle
 from rotkehlchen.oracles.structures import CurrentPriceOracle
 from rotkehlchen.premium.premium import Premium
 from rotkehlchen.tests.utils.constants import CURRENT_PRICE_MOCK
@@ -375,6 +376,7 @@ def _create_inquirer(
         alchemy=Alchemy(database=None),
         moralis=Moralis(database=None),
         manualcurrent=ManualCurrentOracle(),
+        customcurrent=CustomCurrentPriceOracle(),
         msg_aggregator=MessagesAggregator(),
     )
 

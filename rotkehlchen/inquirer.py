@@ -172,6 +172,7 @@ if TYPE_CHECKING:
     from rotkehlchen.externalapis.kraken import Kraken
     from rotkehlchen.externalapis.moralis import Moralis
     from rotkehlchen.globaldb.manual_price_oracles import ManualCurrentOracle
+    from rotkehlchen.oracles.custom_price import CustomCurrentPriceOracle
     from rotkehlchen.user_messages import MessagesAggregator
 
 
@@ -202,6 +203,7 @@ CurrentPriceOracleInstance = Union[
     'UniswapV3Oracle',
     'UniswapV2Oracle',
     'ManualCurrentOracle',
+    'CustomCurrentPriceOracle',
 ]
 
 
@@ -377,6 +379,7 @@ class Inquirer:
     _defillama: Defillama
     _kraken: Kraken
     _manualcurrent: ManualCurrentOracle
+    _customcurrent: CustomCurrentPriceOracle
     _uniswapv2: UniswapV2Oracle | None = None
     _uniswapv3: UniswapV3Oracle | None = None
     _evm_managers: dict[ChainID, EvmManager]
@@ -399,6 +402,7 @@ class Inquirer:
             alchemy: Alchemy | None = None,
             moralis: Moralis | None = None,
             manualcurrent: ManualCurrentOracle | None = None,
+            customcurrent: CustomCurrentPriceOracle | None = None,
             msg_aggregator: MessagesAggregator | None = None,
     ) -> Inquirer:
         if Inquirer.__instance is not None:
@@ -413,6 +417,7 @@ class Inquirer:
         assert alchemy, error_msg
         assert moralis, error_msg
         assert manualcurrent, error_msg
+        assert customcurrent, error_msg
         assert msg_aggregator, error_msg
 
         Inquirer.__instance = object.__new__(cls)
@@ -425,6 +430,7 @@ class Inquirer:
         Inquirer._alchemy = alchemy
         Inquirer._moralis = moralis
         Inquirer._manualcurrent = manualcurrent
+        Inquirer._customcurrent = customcurrent
         Inquirer._cached_current_price = LRUCacheWithRemove(maxsize=1024)
         Inquirer._evm_managers = {}
         Inquirer._msg_aggregator = msg_aggregator
@@ -720,6 +726,23 @@ class Inquirer:
         return unpriced_assets, found_prices
 
     @staticmethod
+    def _get_custom_prices(
+            from_assets: list[Asset],
+            to_asset: Asset,
+    ) -> tuple[list[Asset], dict[Asset, tuple[Price, CurrentPriceOracle]]]:
+        found_prices = {}
+        prices, unpriced_assets = Inquirer._try_oracle_price_query(  # type: ignore[assignment]
+            oracle=CurrentPriceOracle.CUSTOMCURRENT,
+            oracle_instance=Inquirer._customcurrent,
+            from_assets=from_assets,  # type: ignore[arg-type]
+            to_asset=to_asset,  # type: ignore[arg-type]
+        )
+        for from_asset, price in prices.items():
+            found_prices[from_asset] = price, CurrentPriceOracle.CUSTOMCURRENT
+
+        return unpriced_assets, found_prices
+
+    @staticmethod
     def _get_special_prices(
             from_assets: list[Asset],
             to_asset: Asset,
@@ -943,6 +966,7 @@ class Inquirer:
         if len(unpriced_assets) != 0:
             for func in (
                 Inquirer._get_manual_prices,
+                Inquirer._get_custom_prices,
                 Inquirer._query_fiat_pairs,
                 Inquirer._get_special_prices,
             ):

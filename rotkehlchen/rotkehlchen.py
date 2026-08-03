@@ -103,6 +103,7 @@ from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.icons import IconManager
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.oracles.custom_price import CustomCurrentPriceOracle
 from rotkehlchen.oracles.structures import CurrentPriceOracle
 from rotkehlchen.premium.premium import (
     Premium,
@@ -234,6 +235,7 @@ class Rotkehlchen:
             alchemy=self.alchemy,
             moralis=self.moralis,
             manualcurrent=ManualCurrentOracle(),
+            customcurrent=CustomCurrentPriceOracle(),
             msg_aggregator=self.msg_aggregator,
         )
         # Initialize EVM Contracts common abis
@@ -307,7 +309,7 @@ class Rotkehlchen:
         self.exchange_manager.delete_all_exchanges()
         self.data.logout()
         self.monerium = None
-        for instance in (self.cryptocompare, self.defillama, self.coingecko, self.alchemy, self.moralis, Inquirer()._manualcurrent):  # noqa: E501
+        for instance in (self.cryptocompare, self.defillama, self.coingecko, self.alchemy, self.moralis, Inquirer()._manualcurrent, Inquirer()._customcurrent):  # noqa: E501
             if instance.db is not None:  # unset DB if needed
                 instance.unset_database()
         CachedSettings().reset()
@@ -384,6 +386,7 @@ class Rotkehlchen:
         self.alchemy.set_database(self.data.db)
         self.moralis.set_database(self.data.db)
         Inquirer()._manualcurrent.set_database(database=self.data.db)
+        Inquirer()._customcurrent.set_database(database=self.data.db)
 
         # Anything that was set above here has to be cleaned in case of failure in the next step
         # by reset_after_failed_account_creation_or_login()
@@ -722,6 +725,7 @@ class Rotkehlchen:
         self.alchemy.unset_database()
         self.moralis.unset_database()
         Inquirer()._manualcurrent.unset_database()
+        Inquirer()._customcurrent.unset_database()
         CachedSettings().reset()
 
         # Make sure no messages leak to other user sessions

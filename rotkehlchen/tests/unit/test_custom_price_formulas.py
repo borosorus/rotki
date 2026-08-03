@@ -1,16 +1,23 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 
-from rotkehlchen.constants.assets import A_USDC, A_WETH
+from rotkehlchen.constants.assets import A_USD, A_USDC, A_WETH
+from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.db.custom_price_formulas import DBCustomPriceFormulas
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
+from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.oracles.custom_price import (
     ContextCallArgument,
     ContractCallDefinition,
+    CustomCurrentPriceOracle,
     CustomPriceFormula,
     CustomPriceFormulaError,
     evaluate_expression,
     validate_custom_price_formula,
 )
+from rotkehlchen.oracles.structures import CurrentPriceOracle
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 
 
@@ -76,3 +83,84 @@ def test_custom_price_formula_database(database) -> None:
     assert db.delete(A_WETH) is True
     assert db.delete(A_WETH) is False
     assert db.get() == []
+
+
+def test_custom_current_price_oracle(database, inquirer) -> None:
+    db = DBCustomPriceFormulas(database)
+    db.upsert(formula := make_formula())
+    node_inquirer = MagicMock()
+    node_inquirer.call_contract.return_value = 1034200
+    manager = MagicMock(node_inquirer=node_inquirer)
+    Inquirer._evm_managers[formula.asset.chain_id] = manager
+    oracle = CustomCurrentPriceOracle()
+    oracle.set_database(database)
+
+    with patch.object(Inquirer, 'find_price', return_value=FVal(2)) as conversion_mock:
+        evaluation = oracle.evaluate_formula(formula=formula, target_asset=A_USD)
+    assert evaluation.price == FVal('2.0684')
+    assert evaluation.calls[0].raw_value == 1034200
+    assert evaluation.calls[0].normalized_value == FVal('1.0342')
+    assert node_inquirer.call_contract.call_args.kwargs['arguments'] == [10 ** 18]
+    conversion_mock.assert_called_once_with(from_asset=A_USDC, to_asset=A_USD)
+
+    assert oracle.query_current_price(formula.asset, A_USDC) == FVal('1.0342')
+    oracle.processing_pairs.add((formula.asset, A_USDC))
+    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+
+
+@pytest.mark.parametrize('result', [b'', True, (42,)])
+def test_custom_current_price_oracle_malformed_result(database, inquirer, result) -> None:
+    DBCustomPriceFormulas(database).upsert(formula := make_formula())
+    manager = MagicMock()
+    manager.node_inquirer.call_contract.return_value = result
+    Inquirer._evm_managers[formula.asset.chain_id] = manager
+    oracle = CustomCurrentPriceOracle()
+    oracle.set_database(database)
+    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+
+
+def test_custom_current_price_oracle_fallback_cases(database, inquirer) -> None:
+    oracle = CustomCurrentPriceOracle()
+    oracle.set_database(database)
+    assert oracle.query_current_price(A_WETH.resolve_to_evm_token(), A_USDC) == ZERO_PRICE
+
+    DBCustomPriceFormulas(database).upsert(formula := make_formula(enabled=False))
+    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+
+    DBCustomPriceFormulas(database).upsert(formula := make_formula())
+    manager = MagicMock()
+    manager.node_inquirer.call_contract.side_effect = RemoteError('Contract call reverted')
+    Inquirer._evm_managers[formula.asset.chain_id] = manager
+    assert oracle.query_current_price(formula.asset, A_USDC) == ZERO_PRICE
+
+
+def test_custom_price_oracle_priority(inquirer) -> None:
+    asset = A_WETH.resolve_to_evm_token()
+    with (
+        patch.object(Inquirer, '_preprocess_assets_to_query', return_value=({}, {}, [asset])),
+        patch.object(
+            Inquirer,
+            '_get_manual_prices',
+            return_value=([], {asset: (FVal(3), CurrentPriceOracle.MANUALCURRENT)}),
+        ),
+        patch.object(Inquirer, '_get_custom_prices') as custom_mock,
+    ):
+        assert Inquirer._find_prices([asset], A_USD)[asset] == (
+            FVal(3),
+            CurrentPriceOracle.MANUALCURRENT,
+        )
+        custom_mock.assert_not_called()
+
+    with (
+        patch.object(Inquirer, '_preprocess_assets_to_query', return_value=({}, {}, [asset])),
+        patch.object(Inquirer, '_get_manual_prices', return_value=([asset], {})),
+        patch.object(
+            Inquirer,
+            '_get_custom_prices',
+            return_value=([], {asset: (FVal(2), CurrentPriceOracle.CUSTOMCURRENT)}),
+        ),
+    ):
+        assert Inquirer._find_prices([asset], A_USD)[asset] == (
+            FVal(2),
+            CurrentPriceOracle.CUSTOMCURRENT,
+        )

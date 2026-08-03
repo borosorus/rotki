@@ -2,21 +2,38 @@ from __future__ import annotations
 
 import ast
 import keyword
+import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from decimal import DecimalException
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+from eth_abi.exceptions import DecodingError
+
+from rotkehlchen.constants.prices import ZERO_PRICE
+from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
+from rotkehlchen.errors.misc import BlockchainQueryError, RemoteError
 from rotkehlchen.fval import FVal
+from rotkehlchen.inquirer import Inquirer
+from rotkehlchen.interfaces import CurrentPriceOracleInterface
+from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
+from rotkehlchen.types import Price
+from rotkehlchen.utils.interfaces import DBSetterMixin
 
 if TYPE_CHECKING:
+    from eth_typing.abi import ABI
+
     from rotkehlchen.assets.asset import Asset, EvmToken
+    from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.types import ChecksumEvmAddress
 
 FORMULA_VERSION = 1
 INTEGER_TYPE_RE = re.compile(r'^(u?int)(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)$')  # noqa: E501
 METHOD_RE = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$')
 NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
 
 
 class CustomPriceFormulaError(Exception):
@@ -85,6 +102,30 @@ class CustomPriceFormula:
             'enabled': self.enabled,
             'version': self.version,
         }
+
+
+@dataclass(frozen=True)
+class ContractCallResult:
+    name: str
+    address: ChecksumEvmAddress
+    raw_value: int
+    normalized_value: FVal
+
+    def serialize(self) -> dict[str, str | int]:
+        return {
+            'name': self.name,
+            'address': self.address,
+            'raw_value': self.raw_value,
+            'normalized_value': str(self.normalized_value),
+        }
+
+
+@dataclass(frozen=True)
+class CustomPriceEvaluation:
+    price: Price
+    target_asset: Asset
+    quote_asset: Asset
+    calls: tuple[ContractCallResult, ...]
 
 
 def deserialize_call_definition(data: dict[str, Any]) -> ContractCallDefinition:
@@ -259,3 +300,167 @@ def _evaluate_node(
         f'Unsupported expression element: {type(node).__name__}',
         stage='expression',
     )
+
+
+class CustomCurrentPriceOracle(CurrentPriceOracleInterface, DBSetterMixin):
+    def __init__(self) -> None:
+        super().__init__(oracle_name='custom current price oracle')
+        self.db: DBHandler | None = None
+        self.processing_pairs: set[tuple[Asset, Asset]] = set()
+
+    def _get_name(self) -> str:
+        return self.name
+
+    def rate_limited_in_last(self, seconds: int | None = None) -> bool:
+        return False
+
+    def evaluate_formula(
+            self,
+            formula: CustomPriceFormula,
+            target_asset: Asset | None = None,
+    ) -> CustomPriceEvaluation:
+        validate_custom_price_formula(formula)
+        if (evm_manager := Inquirer._evm_managers.get(formula.asset.chain_id)) is None:
+            raise CustomPriceFormulaError(
+                f'No EVM manager is available for {formula.asset.chain_id.to_name()}',
+                stage='call',
+            )
+
+        call_results: list[ContractCallResult] = []
+        values: dict[str, FVal] = {}
+        for call in formula.calls:
+            method_name, input_types = parse_method_signature(call.method)
+            arguments = [
+                10 ** formula.asset.get_decimals()
+                if isinstance(argument, ContextCallArgument)
+                else argument
+                for argument in call.arguments
+            ]
+            for argument, input_type in zip(arguments, input_types, strict=True):
+                validate_integer_argument(argument, input_type)
+            abi = cast('ABI', [{
+                'type': 'function',
+                'name': method_name,
+                'stateMutability': 'view',
+                'inputs': [
+                    {'name': f'argument{index}', 'type': input_type}
+                    for index, input_type in enumerate(input_types)
+                ],
+                'outputs': [{'name': '', 'type': call.output_type}],
+            }])
+            try:
+                raw_value = evm_manager.node_inquirer.call_contract(
+                    contract_address=call.address,
+                    abi=abi,
+                    method_name=method_name,
+                    arguments=arguments,
+                )
+            except (BlockchainQueryError, DecodingError, RemoteError) as e:
+                raise CustomPriceFormulaError(
+                    f'Contract call failed: {e!s}',
+                    stage='call',
+                    call=call.name,
+                    address=call.address,
+                ) from e
+            if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+                raise CustomPriceFormulaError(
+                    f'Contract call returned a malformed {call.output_type} value',
+                    stage='call',
+                    call=call.name,
+                    address=call.address,
+                )
+            normalized_value = FVal(raw_value) / FVal(10 ** call.output_decimals)
+            values[call.name] = normalized_value
+            call_results.append(ContractCallResult(
+                name=call.name,
+                address=call.address,
+                raw_value=raw_value,
+                normalized_value=normalized_value,
+            ))
+
+        try:
+            formula_price = Price(evaluate_expression(formula.expression, values))
+        except (DecimalException, OverflowError) as e:
+            raise CustomPriceFormulaError(
+                f'Expression arithmetic failed: {e!s}',
+                stage='expression',
+            ) from e
+
+        if (target := target_asset or formula.quote_asset) == formula.quote_asset:
+            price = formula_price
+        elif (conversion_price := Inquirer.find_price(
+            from_asset=formula.quote_asset,
+            to_asset=target,
+        )) == ZERO_PRICE:
+            raise CustomPriceFormulaError(
+                f'Could not convert {formula.quote_asset} to {target}',
+                stage='conversion',
+            )
+        else:
+            price = Price(formula_price * conversion_price)
+
+        return CustomPriceEvaluation(
+            price=price,
+            target_asset=target,
+            quote_asset=formula.quote_asset,
+            calls=tuple(call_results),
+        )
+
+    def query_current_price(
+            self,
+            from_asset: Asset,
+            to_asset: Asset,
+    ) -> Price:
+        return self.query_multiple_current_prices(
+            from_assets=[from_asset],
+            to_asset=to_asset,
+        ).get(from_asset, ZERO_PRICE)
+
+    def query_multiple_current_prices(
+            self,
+            from_assets: list[Asset],
+            to_asset: Asset,
+    ) -> dict[Asset, Price]:
+        if self.db is None:
+            return {}
+        from rotkehlchen.db.custom_price_formulas import DBCustomPriceFormulas
+
+        try:
+            formulas = {
+                formula.asset: formula
+                for formula in DBCustomPriceFormulas(self.db).get()
+                if formula.enabled is True
+            }
+        except (CustomPriceFormulaError, KeyError, TypeError, UnknownAsset, ValueError, WrongAssetType) as e:  # noqa: E501
+            log.error('Failed to read custom price formulas from the user database due to %s', e)
+            return {}
+
+        prices: dict[Asset, Price] = {}
+        for from_asset in from_assets:
+            if (formula := formulas.get(from_asset)) is None:
+                continue
+            pair = from_asset, to_asset
+            if pair in self.processing_pairs:
+                log.warning(
+                    'Recursive custom price query detected for %s to %s. Skipping.',
+                    from_asset,
+                    to_asset,
+                )
+                continue
+
+            self.processing_pairs.add(pair)
+            try:
+                prices[from_asset] = self.evaluate_formula(
+                    formula=formula,
+                    target_asset=to_asset,
+                ).price
+            except CustomPriceFormulaError as e:
+                log.warning(
+                    'Failed to evaluate custom price formula for %s to %s due to %s',
+                    from_asset,
+                    to_asset,
+                    e,
+                )
+            finally:
+                self.processing_pairs.remove(pair)
+        return prices

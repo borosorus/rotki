@@ -16,6 +16,7 @@ class CurrentPriceOracle(OracleSource):
     KRAKEN = auto()
     ALCHEMY = auto()
     MORALIS = auto()
+    CUSTOMCURRENT = auto()
 
 
 DEFAULT_CURRENT_PRICE_ORACLES_ORDER = (
