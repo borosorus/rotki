@@ -42,4 +42,27 @@ describe('customPriceFormulaTestResult', () => {
     ]);
     expect(values[1].props('format')).toEqual({ integer: true });
   });
+
+  it('should display a localized failure stage', () => {
+    const wrapper = mount(CustomPriceFormulaTestResult, {
+      global: {
+        stubs: {
+          SimpleTable: { template: '<table><slot /></table>' },
+        },
+      },
+      props: {
+        result: {
+          calls: [],
+          error: 'Contract call reverted',
+          stage: 'call',
+          success: false,
+        },
+        stale: false,
+      },
+      shallow: true,
+    });
+
+    expect(wrapper.text()).toContain('custom_price_formulas.test.stages.call');
+    expect(wrapper.text()).not.toContain('>call<');
+  });
 });

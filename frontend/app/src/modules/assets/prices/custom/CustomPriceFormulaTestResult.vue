@@ -11,6 +11,16 @@ const { result, stale } = defineProps<{
 }>();
 
 const { t } = useI18n({ useScope: 'global' });
+
+function stageLabel(stage: 'validation' | 'call' | 'expression' | 'conversion'): string {
+  const labels = {
+    call: t('custom_price_formulas.test.stages.call'),
+    conversion: t('custom_price_formulas.test.stages.conversion'),
+    expression: t('custom_price_formulas.test.stages.expression'),
+    validation: t('custom_price_formulas.test.stages.validation'),
+  };
+  return labels[stage];
+}
 </script>
 
 <template>
@@ -33,7 +43,7 @@ const { t } = useI18n({ useScope: 'global' });
         </span>
       </template>
       <template v-else>
-        <strong>{{ result.stage }}</strong>: {{ result.error }}
+        <strong>{{ stageLabel(result.stage) }}</strong>: {{ result.error }}
         <span v-if="result.call"> ({{ result.call }})</span>
         <div
           v-if="result.address"

@@ -46,6 +46,20 @@ const PYTHON_KEYWORDS = new Set([
 
 type Translation = ReturnType<typeof useI18n>['t'];
 
+export const MAX_CUSTOM_PRICE_CALLS = 5;
+
+export const MAX_CUSTOM_PRICE_CALL_ARGUMENTS = 16;
+
+export const MAX_CUSTOM_PRICE_EXPRESSION_LENGTH = 1024;
+
+export const MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS = 64;
+
+export const MAX_CUSTOM_PRICE_INTEGER_DIGITS = 78;
+
+export const MAX_CUSTOM_PRICE_METHOD_LENGTH = 256;
+
+export const MAX_CUSTOM_PRICE_NAME_LENGTH = 64;
+
 export const SOLIDITY_INTEGER_TYPES: string[] = Array.from({ length: 32 }, (_, index) => (index + 1) * 8)
   .flatMap(bits => [`uint${bits}`, `int${bits}`]);
 
@@ -63,13 +77,20 @@ export interface FormulaValidationErrors {
 }
 
 export function parseMethodSignature(method: string): ParsedMethod | undefined {
+  if (method.length > MAX_CUSTOM_PRICE_METHOD_LENGTH) {
+    return undefined;
+  }
   const match = METHOD_PATTERN.exec(method.trim());
   if (!match)
     return undefined;
 
   const inputTypes = match[2] === '' ? [] : match[2].split(',');
-  if (inputTypes.some(type => !INTEGER_TYPE_PATTERN.test(type)))
+  if (
+    inputTypes.length > MAX_CUSTOM_PRICE_CALL_ARGUMENTS
+    || inputTypes.some(type => !INTEGER_TYPE_PATTERN.test(type))
+  ) {
     return undefined;
+  }
 
   return { inputTypes, name: match[1] };
 }
@@ -80,14 +101,22 @@ export function rebuildArguments(
   args: CustomPriceCallArgument[],
 ): CustomPriceCallArgument[] {
   const previous = parseMethodSignature(previousMethod)?.inputTypes ?? [];
-  const next = parseMethodSignature(nextMethod)?.inputTypes ?? [];
+  const next = parseMethodSignature(nextMethod)?.inputTypes;
+  if (!next) {
+    return args;
+  }
   return next.map((type, index) => previous[index] === type ? args[index] ?? '' : '');
 }
 
 export function validateIntegerLiteral(value: string, type: string): boolean {
   const typeMatch = INTEGER_TYPE_PATTERN.exec(type);
-  if (!typeMatch || !INTEGER_PATTERN.test(value))
+  if (
+    value.replace(/^-/, '').length > MAX_CUSTOM_PRICE_INTEGER_DIGITS
+    || !typeMatch
+    || !INTEGER_PATTERN.test(value)
+  ) {
     return false;
+  }
 
   const signed = typeMatch[1] === 'int';
   const bits = BigInt(typeMatch[2]);
@@ -100,6 +129,24 @@ export function validateIntegerLiteral(value: string, type: string): boolean {
 interface ExpressionState {
   depth: number;
   expectValue: boolean;
+  operators: number;
+}
+
+function processExpressionOperatorLimit(
+  operator: string,
+  state: ExpressionState,
+  t: Translation,
+): string | undefined {
+  if (!'+-*/'.includes(operator))
+    return undefined;
+
+  state.operators += 1;
+  if (state.operators <= MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS)
+    return undefined;
+
+  return t('custom_price_formulas.validation.expression_operators', {
+    max: MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS,
+  });
 }
 
 function processExpressionOperator(
@@ -107,6 +154,9 @@ function processExpressionOperator(
   state: ExpressionState,
   t: Translation,
 ): string | undefined {
+  const operatorLimitError = processExpressionOperatorLimit(operator, state, t);
+  if (operatorLimitError)
+    return operatorLimitError;
   if (operator === '(') {
     if (!state.expectValue)
       return t('custom_price_formulas.validation.operator_before_parenthesis');
@@ -152,8 +202,13 @@ function validateExpression(
   variables: Set<string>,
   t: Translation,
 ): string | undefined {
+  if (expression.length > MAX_CUSTOM_PRICE_EXPRESSION_LENGTH) {
+    return t('custom_price_formulas.validation.expression_length', {
+      max: MAX_CUSTOM_PRICE_EXPRESSION_LENGTH,
+    });
+  }
   let index = 0;
-  const state: ExpressionState = { depth: 0, expectValue: true };
+  const state: ExpressionState = { depth: 0, expectValue: true, operators: 0 };
   while (index < expression.length) {
     EXPRESSION_TOKEN_PATTERN.lastIndex = index;
     const match = EXPRESSION_TOKEN_PATTERN.exec(expression);
@@ -188,8 +243,15 @@ function validateCallArguments(
 }
 
 function validateCallName(name: string, names: Set<string>, t: Translation): string | undefined {
-  if (!IDENTIFIER_PATTERN.test(name) || PYTHON_KEYWORDS.has(name))
-    return t('custom_price_formulas.validation.invalid_call_name');
+  if (
+    name.length > MAX_CUSTOM_PRICE_NAME_LENGTH
+    || !IDENTIFIER_PATTERN.test(name)
+    || PYTHON_KEYWORDS.has(name)
+  ) {
+    return t('custom_price_formulas.validation.invalid_call_name', {
+      max: MAX_CUSTOM_PRICE_NAME_LENGTH,
+    });
+  }
   if (names.has(name))
     return t('custom_price_formulas.validation.duplicate_call_name');
   return undefined;
@@ -211,8 +273,12 @@ function validateCall(
   if (!isValidEthAddress(call.address))
     callErrors.address = t('custom_price_formulas.validation.invalid_address');
   const parsed = parseMethodSignature(call.method);
-  if (!parsed)
-    callErrors.method = t('custom_price_formulas.validation.invalid_method');
+  if (!parsed) {
+    callErrors.method = t('custom_price_formulas.validation.invalid_method', {
+      maxArguments: MAX_CUSTOM_PRICE_CALL_ARGUMENTS,
+      maxLength: MAX_CUSTOM_PRICE_METHOD_LENGTH,
+    });
+  }
   if (!INTEGER_TYPE_PATTERN.test(call.outputType))
     callErrors.outputType = t('custom_price_formulas.validation.invalid_output_type');
   if (!Number.isInteger(call.outputDecimals) || call.outputDecimals < 0 || call.outputDecimals > 255)
@@ -235,8 +301,14 @@ export function validateCustomPriceFormula(
     errors.quoteAsset = t('custom_price_formulas.validation.quote_asset_required');
   else if (formula.asset === formula.quoteAsset)
     errors.quoteAsset = t('custom_price_formulas.validation.same_assets');
-  if (formula.calls.length === 0)
+  if (formula.calls.length === 0) {
     errors.schema = t('custom_price_formulas.validation.call_required');
+  }
+  else if (formula.calls.length > MAX_CUSTOM_PRICE_CALLS) {
+    errors.schema = t('custom_price_formulas.validation.call_limit', {
+      max: MAX_CUSTOM_PRICE_CALLS,
+    });
+  }
 
   const names = new Set<string>();
   formula.calls.forEach((call, index) => validateCall(call, index, names, errors, t));

@@ -2374,8 +2374,7 @@
     "messages": {
       "delete_title": "Could not delete custom price formula",
       "fetch_title": "Could not load custom price formulas",
-      "save_title": "Could not save custom price formula",
-      "test_title": "Could not test custom price formula"
+      "save_title": "Could not save custom price formula"
     },
     "table": {
       "call": "Call",
@@ -2391,6 +2390,12 @@
       "description": "Execute the read-only contract calls without saving. Conversion into another asset can be tested separately.",
       "normalized_value": "Normalized value",
       "raw_value": "Raw value",
+      "stages": {
+        "call": "Contract call",
+        "conversion": "Quote conversion",
+        "expression": "Expression",
+        "validation": "Validation"
+      },
       "stale": "This result is from an earlier version of the formula.",
       "success": "Formula price",
       "target_asset": "Convert test result to (optional)",
@@ -2398,15 +2403,18 @@
     },
     "validation": {
       "argument_count": "The argument count must match the method signature",
+      "call_limit": "A formula can contain at most {max} contract calls",
       "call_required": "Add at least one contract call",
       "duplicate_call_name": "Call result names must be unique",
+      "expression_length": "The expression must contain at most {max} characters",
+      "expression_operators": "The expression must contain at most {max} arithmetic operators",
       "expression_required": "Enter a price expression",
       "incomplete_expression": "The expression is incomplete",
       "integer_range": "Enter integer literals within their Solidity type range",
       "invalid_address": "Enter a valid EVM contract address",
-      "invalid_call_name": "Use a non-reserved identifier containing letters, numbers, and underscores",
+      "invalid_call_name": "Use a non-reserved identifier of at most {max} characters containing letters, numbers, and underscores",
       "invalid_expression_element": "Only numbers, call names, parentheses, and + - * / are allowed",
-      "invalid_method": "Use a Solidity signature with integer arguments only",
+      "invalid_method": "Use a Solidity signature of at most {maxLength} characters and {maxArguments} integer arguments",
       "invalid_output_type": "Select a supported integer output type",
       "missing_operand": "An arithmetic operator is missing an operand",
       "operator_before_parenthesis": "An operator is required before a parenthesis",

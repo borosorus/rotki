@@ -132,6 +132,11 @@ from rotkehlchen.icons import ALLOWED_ICON_EXTENSIONS
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.oracles.custom_price import (
     FORMULA_VERSION,
+    MAX_CUSTOM_PRICE_CALL_ARGUMENTS,
+    MAX_CUSTOM_PRICE_CALLS,
+    MAX_CUSTOM_PRICE_EXPRESSION_LENGTH,
+    MAX_CUSTOM_PRICE_METHOD_LENGTH,
+    MAX_CUSTOM_PRICE_NAME_LENGTH,
     ContractCallDefinition,
     CustomPriceFormula,
     CustomPriceFormulaError,
@@ -3418,10 +3423,20 @@ class ManualPriceSchema(Schema):
 
 
 class ContractCallDefinitionSchema(Schema):
-    name = NonEmptyStringField(required=True)
+    name = NonEmptyStringField(
+        required=True,
+        validate=validate.Length(max=MAX_CUSTOM_PRICE_NAME_LENGTH),
+    )
     address = EvmAddressField(required=True)
-    method = NonEmptyStringField(required=True)
-    arguments = fields.List(fields.Raw(), required=True)
+    method = NonEmptyStringField(
+        required=True,
+        validate=validate.Length(max=MAX_CUSTOM_PRICE_METHOD_LENGTH),
+    )
+    arguments = fields.List(
+        fields.Raw(),
+        required=True,
+        validate=validate.Length(max=MAX_CUSTOM_PRICE_CALL_ARGUMENTS),
+    )
     output_type = NonEmptyStringField(required=True)
     output_decimals = fields.Integer(
         strict=True,
@@ -3440,11 +3455,14 @@ class ContractCallDefinitionSchema(Schema):
 class CustomPriceFormulaBaseSchema(Schema):
     asset = AssetField(expected_type=EvmToken, required=True)
     quote_asset = AssetField(expected_type=Asset, required=True)
-    expression = NonEmptyStringField(required=True)
+    expression = NonEmptyStringField(
+        required=True,
+        validate=validate.Length(max=MAX_CUSTOM_PRICE_EXPRESSION_LENGTH),
+    )
     calls = fields.List(
         fields.Nested(ContractCallDefinitionSchema),
         required=True,
-        validate=validate.Length(min=1),
+        validate=validate.Length(min=1, max=MAX_CUSTOM_PRICE_CALLS),
     )
     enabled = fields.Boolean(load_default=True)
     version = fields.Integer(

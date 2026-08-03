@@ -1,6 +1,19 @@
 import type { CustomPriceFormula } from './types';
 import { describe, expect, it } from 'vitest';
-import { hasFormulaValidationErrors, parseMethodSignature, rebuildArguments, validateCustomPriceFormula, validateIntegerLiteral } from './validation';
+import {
+  hasFormulaValidationErrors,
+  MAX_CUSTOM_PRICE_CALL_ARGUMENTS,
+  MAX_CUSTOM_PRICE_CALLS,
+  MAX_CUSTOM_PRICE_EXPRESSION_LENGTH,
+  MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS,
+  MAX_CUSTOM_PRICE_INTEGER_DIGITS,
+  MAX_CUSTOM_PRICE_METHOD_LENGTH,
+  MAX_CUSTOM_PRICE_NAME_LENGTH,
+  parseMethodSignature,
+  rebuildArguments,
+  validateCustomPriceFormula,
+  validateIntegerLiteral,
+} from './validation';
 
 function t(key: string, parameters?: Record<string, unknown>): string {
   return typeof parameters?.identifier === 'string' ? `${key}:${parameters.identifier}` : key;
@@ -40,6 +53,7 @@ describe('custom price formula validation', () => {
       'preview(uint256,uint128,uint8)',
       ['42', '-7'],
     )).toEqual(['42', '', '']);
+    expect(rebuildArguments('preview(uint256)', 'preview(', ['42'])).toEqual(['42']);
   });
 
   it('should validate full Solidity integer ranges losslessly', () => {
@@ -72,5 +86,33 @@ describe('custom price formula validation', () => {
     data.calls[0].name = 'lambda';
     expect(validateCustomPriceFormula(data, t).calls[0].name)
       .toBe('custom_price_formulas.validation.invalid_call_name');
+  });
+
+  it('should enforce the resource limits shared with the backend', () => {
+    const data = formula();
+    data.calls = Array.from({ length: MAX_CUSTOM_PRICE_CALLS + 1 }, (_, index) => ({
+      ...data.calls[0],
+      name: `call_${index}`,
+    }));
+    data.expression = `call_1${' + 1'.repeat(MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS + 1)}`;
+    data.calls[0].name = 'a'.repeat(MAX_CUSTOM_PRICE_NAME_LENGTH + 1);
+    data.calls[0].method = 'a'.repeat(MAX_CUSTOM_PRICE_METHOD_LENGTH + 1);
+    const errors = validateCustomPriceFormula(data, t);
+
+    expect(errors.schema).toBe('custom_price_formulas.validation.call_limit');
+    expect(errors.calls[0].name).toBe('custom_price_formulas.validation.invalid_call_name');
+    expect(errors.calls[0].method).toBe('custom_price_formulas.validation.invalid_method');
+    expect(errors.expression).toBe('custom_price_formulas.validation.expression_operators');
+    expect(parseMethodSignature(
+      `value(${Array.from({ length: MAX_CUSTOM_PRICE_CALL_ARGUMENTS + 1 }).fill('uint8').join(',')})`,
+    )).toBeUndefined();
+    expect(validateIntegerLiteral(
+      '1'.repeat(MAX_CUSTOM_PRICE_INTEGER_DIGITS + 1),
+      'uint256',
+    )).toBe(false);
+
+    data.expression = '1'.repeat(MAX_CUSTOM_PRICE_EXPRESSION_LENGTH + 1);
+    expect(validateCustomPriceFormula(data, t).expression)
+      .toBe('custom_price_formulas.validation.expression_length');
   });
 });

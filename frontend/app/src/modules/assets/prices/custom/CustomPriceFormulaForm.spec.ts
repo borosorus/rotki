@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import AssetSelect from '@/modules/shell/components/inputs/AssetSelect.vue';
 import CustomPriceFormulaForm from './CustomPriceFormulaForm.vue';
+import { MAX_CUSTOM_PRICE_CALLS } from './validation';
 import '@test/i18n';
 
 const formula: CustomPriceFormula = {
@@ -39,5 +40,29 @@ describe('customPriceFormulaForm', () => {
     expect(wrapper.findAllComponents(AssetSelect)[2].props('label')).toContain(
       'custom_price_formulas.test.target_asset',
     );
+  });
+
+  it('should disable adding calls at the configured limit', () => {
+    const wrapper = mount(CustomPriceFormulaForm, {
+      global: {
+        stubs: {
+          HintMenuIcon: { template: '<div><slot /></div>' },
+        },
+      },
+      props: {
+        modelValue: {
+          ...formula,
+          calls: Array.from({ length: MAX_CUSTOM_PRICE_CALLS }, (_, index) => ({
+            ...formula.calls[0],
+            name: `call_${index}`,
+          })),
+        },
+      },
+      shallow: true,
+    });
+
+    expect(wrapper.find('[data-testid="custom-formula-add-call"]').attributes('disabled'))
+      .toBeDefined();
+    expect(wrapper.text()).toContain('custom_price_formulas.validation.call_limit');
   });
 });

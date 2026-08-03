@@ -80,4 +80,20 @@ describe('customPriceFormulaDialog', () => {
 
     expect(mockTestFormula).toHaveBeenCalledWith({ ...formula, targetAsset: 'EUR' });
   });
+
+  it('should show test request failures in the dialog and clear loading', async () => {
+    mockTestFormula.mockRejectedValueOnce(new Error('Request failed'));
+    const dialog = wrapper();
+    await nextTick();
+    const vm = componentVm<{
+      runTest: () => Promise<void>;
+      serverError: string;
+      testing: boolean;
+    }>(dialog);
+
+    await vm.runTest();
+
+    expect(vm.serverError).toBe('Request failed');
+    expect(vm.testing).toBe(false);
+  });
 });

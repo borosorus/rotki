@@ -7,6 +7,7 @@ import requests
 from rotkehlchen.constants.assets import A_USDC, A_WETH
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.inquirer import Inquirer
+from rotkehlchen.oracles.custom_price import MAX_CUSTOM_PRICE_CALLS
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -117,3 +118,13 @@ def test_custom_price_formula_api_validation(rotkehlchen_api_server: APIServer) 
         json=formula_payload(expression='unknown_variable'),
     )
     assert_error_response(response, 'Unknown expression variable')
+
+    payload = formula_payload()
+    payload['calls'] *= MAX_CUSTOM_PRICE_CALLS + 1
+    assert_error_response(
+        requests.put(
+            api_url_for(rotkehlchen_api_server, 'custompriceformulasresource'),
+            json=payload,
+        ),
+        f'Length must be between 1 and {MAX_CUSTOM_PRICE_CALLS}',
+    )

@@ -4,6 +4,7 @@ import type { CustomPriceFormula } from './types';
 import AssetDetails from '@/modules/assets/AssetDetails.vue';
 import { EVM_TOKEN } from '@/modules/assets/types';
 import { useConfirmStore } from '@/modules/core/common/use-confirm-store';
+import { useCommonTableProps } from '@/modules/core/table/use-common-table-props';
 import AssetSelect from '@/modules/shell/components/inputs/AssetSelect.vue';
 import RowActions from '@/modules/shell/components/RowActions.vue';
 import TablePageLayout from '@/modules/shell/layout/TablePageLayout.vue';
@@ -12,12 +13,13 @@ import { useCustomPriceFormulas } from './use-custom-price-formulas';
 
 const { t } = useI18n({ useScope: 'global' });
 const filter = ref<string>();
-const open = ref<boolean>(false);
-const editableItem = ref<CustomPriceFormula | null>(null);
 const updating = ref<Set<string>>(new Set());
 
+const { editableItem, openDialog } = useCommonTableProps<CustomPriceFormula>();
 const { deleteFormula, formulas, loading, refresh, setEnabled } = useCustomPriceFormulas();
 const { show } = useConfirmStore();
+const route = useRoute();
+const router = useRouter();
 
 const rows = computed<CustomPriceFormula[]>(() => {
   const selected = get(filter);
@@ -34,13 +36,13 @@ const headers = computed<DataTableColumn<CustomPriceFormula>[]>(() => [
 ]);
 
 function add(): void {
-  set(editableItem, null);
-  set(open, true);
+  set(editableItem, undefined);
+  set(openDialog, true);
 }
 
 function edit(formula: CustomPriceFormula): void {
   set(editableItem, formula);
-  set(open, true);
+  set(openDialog, true);
 }
 
 async function toggleEnabled(formula: CustomPriceFormula, enabled: boolean): Promise<void> {
@@ -58,24 +60,35 @@ function confirmDelete(formula: CustomPriceFormula): void {
   }, async () => deleteFormula(formula));
 }
 
-onMounted(refresh);
+onMounted(async () => {
+  await refresh();
+  if (get(route).query.add) {
+    add();
+    await router.replace({ query: {} });
+  }
+});
 </script>
 
 <template>
   <TablePageLayout :title="[t('navigation_menu.manage_prices'), t('navigation_menu.manage_prices_sub.custom_formulas')]">
     <template #buttons>
-      <RuiButton
-        color="primary"
-        variant="outlined"
-        size="lg"
-        :loading="loading"
-        @click="refresh()"
-      >
-        <template #prepend>
-          <RuiIcon name="lu-refresh-ccw" />
+      <RuiTooltip :open-delay="400">
+        <template #activator>
+          <RuiButton
+            color="primary"
+            variant="outlined"
+            size="lg"
+            :loading="loading"
+            @click="refresh()"
+          >
+            <template #prepend>
+              <RuiIcon name="lu-refresh-ccw" />
+            </template>
+            {{ t('common.refresh') }}
+          </RuiButton>
         </template>
-        {{ t('common.refresh') }}
-      </RuiButton>
+        {{ t('price_table.refresh_tooltip') }}
+      </RuiTooltip>
       <RuiButton
         color="primary"
         size="lg"
@@ -142,8 +155,8 @@ onMounted(refresh);
         <template #item.actions="{ row }">
           <RowActions
             :disabled="loading || updating.has(row.asset)"
-            :edit-tooltip="t('common.actions.edit')"
-            :delete-tooltip="t('common.actions.delete')"
+            :edit-tooltip="t('price_table.actions.edit.tooltip')"
+            :delete-tooltip="t('price_table.actions.delete.tooltip')"
             @edit-click="edit(row)"
             @delete-click="confirmDelete(row)"
           />
@@ -152,7 +165,7 @@ onMounted(refresh);
     </RuiCard>
 
     <CustomPriceFormulaDialog
-      v-model:open="open"
+      v-model:open="openDialog"
       :editable-item="editableItem"
       @refresh="refresh()"
     />

@@ -6,7 +6,13 @@ import HintMenuIcon from '@/modules/shell/components/HintMenuIcon.vue';
 import AssetSelect from '@/modules/shell/components/inputs/AssetSelect.vue';
 import CustomPriceCallCard from './CustomPriceCallCard.vue';
 import CustomPriceFormulaTestResultContent from './CustomPriceFormulaTestResult.vue';
-import { type FormulaValidationErrors, hasFormulaValidationErrors, validateCustomPriceFormula } from './validation';
+import {
+  type FormulaValidationErrors,
+  hasFormulaValidationErrors,
+  MAX_CUSTOM_PRICE_CALLS,
+  MAX_CUSTOM_PRICE_EXPRESSION_LENGTH,
+  validateCustomPriceFormula,
+} from './validation';
 
 const modelValue = defineModel<CustomPriceFormula>({ required: true });
 const testTarget = defineModel<string>('testTarget', { default: '' });
@@ -138,6 +144,8 @@ defineExpose({ validate });
       <RuiButton
         variant="outlined"
         color="primary"
+        data-testid="custom-formula-add-call"
+        :disabled="modelValue.calls.length >= MAX_CUSTOM_PRICE_CALLS"
         @click="addCall()"
       >
         <template #prepend>
@@ -145,6 +153,12 @@ defineExpose({ validate });
         </template>
         {{ t('custom_price_formulas.form.add_call') }}
       </RuiButton>
+      <div
+        v-if="modelValue.calls.length >= MAX_CUSTOM_PRICE_CALLS"
+        class="text-caption text-rui-text-secondary"
+      >
+        {{ t('custom_price_formulas.validation.call_limit', { max: MAX_CUSTOM_PRICE_CALLS }) }}
+      </div>
     </div>
 
     <RuiTextArea
@@ -152,6 +166,7 @@ defineExpose({ validate });
       variant="outlined"
       auto-grow
       min-rows="2"
+      :maxlength="MAX_CUSTOM_PRICE_EXPRESSION_LENGTH"
       :label="t('custom_price_formulas.form.expression')"
       :hint="t('custom_price_formulas.form.expression_hint', { variables: modelValue.calls.map(call => call.name).join(', ') })"
       persistent-hint

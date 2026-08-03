@@ -78,12 +78,19 @@ async function runTest(): Promise<void> {
   set(serverError, '');
   const targetAsset = get(testTarget) || undefined;
   const submittedState = get(currentTestState);
-  const result = await testFormula({ ...data, ...(targetAsset ? { targetAsset } : {}) });
-  if (result) {
+  try {
+    const result = await testFormula({ ...data, ...(targetAsset ? { targetAsset } : {}) });
     set(testResult, result);
     set(testedState, submittedState);
   }
-  set(testing, false);
+  catch (error: unknown) {
+    set(serverError, error instanceof ApiValidationError
+      ? validationErrorMessage(error)
+      : getErrorMessage(error));
+  }
+  finally {
+    set(testing, false);
+  }
 }
 
 watchImmediate([open, () => editableItem], ([isOpen, item]) => {

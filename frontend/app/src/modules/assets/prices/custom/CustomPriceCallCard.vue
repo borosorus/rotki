@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import type { ArgumentMode, ContractCallDefinition, CustomPriceCallArgument } from './types';
-import { parseMethodSignature, rebuildArguments, SOLIDITY_INTEGER_TYPES } from './validation';
+import {
+  MAX_CUSTOM_PRICE_INTEGER_DIGITS,
+  MAX_CUSTOM_PRICE_METHOD_LENGTH,
+  MAX_CUSTOM_PRICE_NAME_LENGTH,
+  parseMethodSignature,
+  rebuildArguments,
+  SOLIDITY_INTEGER_TYPES,
+} from './validation';
 
 const modelValue = defineModel<ContractCallDefinition>({ required: true });
 
@@ -79,6 +86,7 @@ function setArgument(index: number, value: string): void {
     <div class="grid md:grid-cols-2 gap-x-4">
       <RuiTextField
         :model-value="modelValue.name"
+        :maxlength="MAX_CUSTOM_PRICE_NAME_LENGTH"
         variant="outlined"
         :label="t('custom_price_formulas.form.call_name')"
         :error-messages="errors.name"
@@ -93,6 +101,7 @@ function setArgument(index: number, value: string): void {
       />
       <RuiTextField
         v-model="method"
+        :maxlength="MAX_CUSTOM_PRICE_METHOD_LENGTH"
         variant="outlined"
         :label="t('custom_price_formulas.form.method')"
         :hint="t('custom_price_formulas.form.method_hint')"
@@ -146,6 +155,7 @@ function setArgument(index: number, value: string): void {
         <RuiTextField
           v-if="argumentModes[argumentIndex] === 'literal'"
           :model-value="argumentLiteral(argumentIndex)"
+          :maxlength="MAX_CUSTOM_PRICE_INTEGER_DIGITS + (inputType.startsWith('int') ? 1 : 0)"
           variant="outlined"
           :label="t('custom_price_formulas.form.literal_value')"
           @update:model-value="setArgument(argumentIndex, $event)"

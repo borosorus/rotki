@@ -11,7 +11,7 @@ interface UseCustomPriceFormulasReturn {
   refresh: () => Promise<void>;
   saveFormula: (formula: CustomPriceFormula) => Promise<CustomPriceFormula>;
   setEnabled: (formula: CustomPriceFormula, enabled: boolean) => Promise<boolean>;
-  testFormula: (formula: CustomPriceFormulaTestPayload) => Promise<CustomPriceFormulaTestResult | undefined>;
+  testFormula: (formula: CustomPriceFormulaTestPayload) => Promise<CustomPriceFormulaTestResult>;
 }
 
 export function useCustomPriceFormulas(): UseCustomPriceFormulasReturn {
@@ -73,14 +73,8 @@ export function useCustomPriceFormulas(): UseCustomPriceFormulasReturn {
 
   async function testFormula(
     formula: CustomPriceFormulaTestPayload,
-  ): Promise<CustomPriceFormulaTestResult | undefined> {
-    try {
-      return await api.testFormula(formula);
-    }
-    catch (error: unknown) {
-      showErrorMessage(t('custom_price_formulas.messages.test_title'), getErrorMessage(error));
-      return undefined;
-    }
+  ): Promise<CustomPriceFormulaTestResult> {
+    return api.testFormula(formula);
   }
 
   return {

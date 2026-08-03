@@ -9,6 +9,13 @@ from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.oracles.custom_price import (
+    MAX_CUSTOM_PRICE_CALL_ARGUMENTS,
+    MAX_CUSTOM_PRICE_CALLS,
+    MAX_CUSTOM_PRICE_EXPRESSION_LENGTH,
+    MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS,
+    MAX_CUSTOM_PRICE_INTEGER_DIGITS,
+    MAX_CUSTOM_PRICE_METHOD_LENGTH,
+    MAX_CUSTOM_PRICE_NAME_LENGTH,
     ContextCallArgument,
     ContractCallDefinition,
     CustomCurrentPriceOracle,
@@ -49,6 +56,85 @@ def test_custom_price_formula_validation() -> None:
         validate_custom_price_formula(make_formula(expression='missing'))
     with pytest.raises(CustomPriceFormulaError, match='Unsupported expression element'):
         validate_custom_price_formula(make_formula(expression='assets_per_share.__class__'))
+
+
+def test_custom_price_formula_limits() -> None:
+    base_formula = make_formula()
+    base_call = base_formula.calls[0]
+    calls = tuple(ContractCallDefinition(
+        name=f'call_{index}',
+        address=base_call.address,
+        method='value()' if index != 0 else base_call.method,
+        arguments=() if index != 0 else base_call.arguments,
+        output_type='uint256',
+        output_decimals=0,
+    ) for index in range(MAX_CUSTOM_PRICE_CALLS))
+    validate_custom_price_formula(CustomPriceFormula(
+        asset=base_formula.asset,
+        quote_asset=base_formula.quote_asset,
+        expression='call_0',
+        calls=calls,
+        enabled=True,
+    ))
+
+    invalid_formulas = (
+        CustomPriceFormula(
+            asset=base_formula.asset,
+            quote_asset=base_formula.quote_asset,
+            expression=base_formula.expression,
+            calls=(*calls, calls[-1]),
+            enabled=True,
+        ),
+        CustomPriceFormula(
+            asset=base_formula.asset,
+            quote_asset=base_formula.quote_asset,
+            expression=base_formula.expression,
+            calls=(ContractCallDefinition(
+                name='a' * (MAX_CUSTOM_PRICE_NAME_LENGTH + 1),
+                address=base_call.address,
+                method='value()',
+                arguments=(),
+                output_type='uint256',
+                output_decimals=0,
+            ),),
+            enabled=True,
+        ),
+        CustomPriceFormula(
+            asset=base_formula.asset,
+            quote_asset=base_formula.quote_asset,
+            expression=base_formula.expression,
+            calls=(ContractCallDefinition(
+                name='value',
+                address=base_call.address,
+                method='a' * (MAX_CUSTOM_PRICE_METHOD_LENGTH + 1),
+                arguments=(),
+                output_type='uint256',
+                output_decimals=0,
+            ),),
+            enabled=True,
+        ),
+        make_formula(expression='1' * (MAX_CUSTOM_PRICE_EXPRESSION_LENGTH + 1)),
+        make_formula(expression='assets_per_share' + ' + 1' * (MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS + 1)),  # noqa: E501
+    )
+    for formula in invalid_formulas:
+        with pytest.raises(CustomPriceFormulaError):
+            validate_custom_price_formula(formula)
+
+    with pytest.raises(CustomPriceFormulaError, match='at most 16 arguments'):
+        validate_custom_price_formula(CustomPriceFormula(
+            asset=base_formula.asset,
+            quote_asset=base_formula.quote_asset,
+            expression='value',
+            calls=(ContractCallDefinition(
+                name='value',
+                address=base_call.address,
+                method=f'value({",".join(["uint8"] * (MAX_CUSTOM_PRICE_CALL_ARGUMENTS + 1))})',
+                arguments=tuple(range(MAX_CUSTOM_PRICE_CALL_ARGUMENTS + 1)),
+                output_type='uint256',
+                output_decimals=0,
+            ),),
+            enabled=True,
+        ))
 
 
 @pytest.mark.parametrize(('expression', 'expected'), [
@@ -112,6 +198,10 @@ def test_custom_price_formula_lossless_integer_serialization() -> None:
     assert deserialize_call_definition(serialized) == call
 
     serialized['arguments'] = ['01']
+    with pytest.raises(CustomPriceFormulaError, match='Invalid decimal integer argument'):
+        deserialize_call_definition(serialized)
+
+    serialized['arguments'] = ['1' * (MAX_CUSTOM_PRICE_INTEGER_DIGITS + 1)]
     with pytest.raises(CustomPriceFormulaError, match='Invalid decimal integer argument'):
         deserialize_call_definition(serialized)
 
@@ -200,6 +290,11 @@ def test_custom_current_price_oracle_fallback_cases(database, inquirer) -> None:
     Inquirer._evm_managers.pop(formula.asset.chain_id)
     with pytest.raises(CustomPriceFormulaError, match='No EVM manager'):
         oracle.evaluate_formula(formula)
+
+    DBCustomPriceFormulas(database).upsert(over_limit_formula := make_formula(
+        expression='assets_per_share' + ' + 1' * (MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS + 1),
+    ))
+    assert oracle.query_current_price(over_limit_formula.asset, quote_asset) == ZERO_PRICE
 
 
 def test_custom_price_oracle_priority(inquirer) -> None:

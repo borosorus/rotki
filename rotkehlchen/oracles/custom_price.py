@@ -29,6 +29,13 @@ if TYPE_CHECKING:
     from rotkehlchen.types import ChecksumEvmAddress
 
 FORMULA_VERSION = 1
+MAX_CUSTOM_PRICE_CALLS = 5
+MAX_CUSTOM_PRICE_CALL_ARGUMENTS = 16
+MAX_CUSTOM_PRICE_EXPRESSION_LENGTH = 1024
+MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS = 64
+MAX_CUSTOM_PRICE_NAME_LENGTH = 64
+MAX_CUSTOM_PRICE_METHOD_LENGTH = 256
+MAX_CUSTOM_PRICE_INTEGER_DIGITS = 78  # uint256 is the largest supported integer type
 INTEGER_TYPE_RE = re.compile(r'^(u?int)(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)$')  # noqa: E501
 METHOD_RE = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$')
 NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
@@ -134,8 +141,19 @@ class CustomPriceEvaluation:
 
 
 def deserialize_call_definition(data: dict[str, Any]) -> ContractCallDefinition:
+    try:
+        raw_arguments = data['arguments']
+    except (KeyError, TypeError) as e:
+        raise CustomPriceFormulaError(f'Invalid contract call arguments: {e!s}') from e
+    if not isinstance(raw_arguments, list):
+        raise CustomPriceFormulaError('Contract call arguments must be a list')
+    if len(raw_arguments) > MAX_CUSTOM_PRICE_CALL_ARGUMENTS:
+        raise CustomPriceFormulaError(
+            f'Contract calls support at most {MAX_CUSTOM_PRICE_CALL_ARGUMENTS} arguments',
+        )
+
     arguments: list[CallArgument] = []
-    for argument in data['arguments']:
+    for argument in raw_arguments:
         if isinstance(argument, bool) or not isinstance(argument, int | str | dict):
             raise CustomPriceFormulaError(
                 'Call arguments must be decimal integer strings or context objects',
@@ -143,9 +161,17 @@ def deserialize_call_definition(data: dict[str, Any]) -> ContractCallDefinition:
         if isinstance(argument, int):
             arguments.append(argument)
         elif isinstance(argument, str):
-            if DECIMAL_INTEGER_RE.fullmatch(argument) is None:
+            if (
+                len(argument.removeprefix('-')) > MAX_CUSTOM_PRICE_INTEGER_DIGITS or
+                DECIMAL_INTEGER_RE.fullmatch(argument) is None
+            ):
                 raise CustomPriceFormulaError(f'Invalid decimal integer argument: {argument}')
-            arguments.append(int(argument))
+            try:
+                arguments.append(int(argument))
+            except ValueError as e:
+                raise CustomPriceFormulaError(
+                    f'Invalid decimal integer argument: {argument}',
+                ) from e
         elif argument != {'context': 'one_token'}:
             raise CustomPriceFormulaError(f'Unsupported call argument context: {argument!s}')
         else:
@@ -202,17 +228,31 @@ def validate_custom_price_formula(formula: CustomPriceFormula) -> None:
         raise CustomPriceFormulaError(
             f'Unsupported custom price formula version: {formula.version}',
         )
-    if len(formula.calls) == 0:
-        raise CustomPriceFormulaError('A custom price formula requires at least one contract call')
+    if not 1 <= len(formula.calls) <= MAX_CUSTOM_PRICE_CALLS:
+        raise CustomPriceFormulaError(
+            f'A custom price formula requires between 1 and {MAX_CUSTOM_PRICE_CALLS} contract calls',  # noqa: E501
+        )
 
     names: set[str] = set()
     for call in formula.calls:
-        if NAME_RE.fullmatch(call.name) is None or keyword.iskeyword(call.name):
+        if (
+            len(call.name) > MAX_CUSTOM_PRICE_NAME_LENGTH or
+            NAME_RE.fullmatch(call.name) is None or
+            keyword.iskeyword(call.name)
+        ):
             raise CustomPriceFormulaError(f'Invalid call name: {call.name}')
         if call.name in names:
             raise CustomPriceFormulaError(f'Duplicate call name: {call.name}')
         names.add(call.name)
+        if len(call.method) > MAX_CUSTOM_PRICE_METHOD_LENGTH:
+            raise CustomPriceFormulaError(
+                f'Call {call.name} function signature exceeds {MAX_CUSTOM_PRICE_METHOD_LENGTH} characters',  # noqa: E501
+            )
         _, input_types = parse_method_signature(call.method)
+        if len(call.arguments) > MAX_CUSTOM_PRICE_CALL_ARGUMENTS:
+            raise CustomPriceFormulaError(
+                f'Call {call.name} supports at most {MAX_CUSTOM_PRICE_CALL_ARGUMENTS} arguments',
+            )
         if len(input_types) != len(call.arguments):
             raise CustomPriceFormulaError(
                 f'Call {call.name} expects {len(input_types)} arguments but got '
@@ -232,17 +272,16 @@ def validate_custom_price_formula(formula: CustomPriceFormula) -> None:
 
 
 def validate_expression(expression: str, variables: set[str]) -> None:
-    try:
-        tree = ast.parse(expression, mode='eval')
-    except SyntaxError as e:
-        raise CustomPriceFormulaError(
-            f'Invalid expression: {e.msg}',
-            stage='expression',
-        ) from e
+    tree = _parse_expression(expression)
     _evaluate_node(tree.body, variables=variables, values=None, source=expression)
 
 
-def evaluate_expression(expression: str, values: dict[str, FVal]) -> FVal:
+def _parse_expression(expression: str) -> ast.Expression:
+    if len(expression) > MAX_CUSTOM_PRICE_EXPRESSION_LENGTH:
+        raise CustomPriceFormulaError(
+            f'Expression exceeds {MAX_CUSTOM_PRICE_EXPRESSION_LENGTH} characters',
+            stage='expression',
+        )
     try:
         tree = ast.parse(expression, mode='eval')
     except SyntaxError as e:
@@ -250,7 +289,16 @@ def evaluate_expression(expression: str, values: dict[str, FVal]) -> FVal:
             f'Invalid expression: {e.msg}',
             stage='expression',
         ) from e
+    if sum(isinstance(node, ast.BinOp | ast.UnaryOp) for node in ast.walk(tree)) > MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS:  # noqa: E501
+        raise CustomPriceFormulaError(
+            f'Expression exceeds {MAX_CUSTOM_PRICE_EXPRESSION_OPERATORS} arithmetic operators',
+            stage='expression',
+        )
+    return tree
 
+
+def evaluate_expression(expression: str, values: dict[str, FVal]) -> FVal:
+    tree = _parse_expression(expression)
     result = _evaluate_node(
         tree.body,
         variables=set(values),
