@@ -85,7 +85,7 @@ def test_custom_price_formula_test_endpoint(rotkehlchen_api_server: APIServer) -
         'calls': [{
             'name': 'assets_per_share',
             'address': A_WETH.resolve_to_evm_token().evm_address,
-            'raw_value': 1034200,
+            'raw_value': '1034200',
             'normalized_value': '1.0342',
         }],
     }

@@ -14,6 +14,7 @@ from rotkehlchen.oracles.custom_price import (
     CustomCurrentPriceOracle,
     CustomPriceFormula,
     CustomPriceFormulaError,
+    deserialize_call_definition,
     evaluate_expression,
     validate_custom_price_formula,
 )
@@ -90,6 +91,29 @@ def test_custom_price_formula_database(database) -> None:
     assert db.delete(A_WETH) is True
     assert db.delete(A_WETH) is False
     assert db.get() == []
+
+
+def test_custom_price_formula_lossless_integer_serialization() -> None:
+    formula = make_formula()
+    large_value = 2 ** 255 - 1
+    call = ContractCallDefinition(
+        name='large_value',
+        address=formula.calls[0].address,
+        method='largeValue(int256)',
+        arguments=(large_value,),
+        output_type='int256',
+        output_decimals=0,
+    )
+    serialized = call.serialize()
+    assert serialized['arguments'] == [str(large_value)]
+    assert deserialize_call_definition(serialized) == call
+
+    serialized['arguments'] = [large_value]  # legacy JSON integer input remains accepted
+    assert deserialize_call_definition(serialized) == call
+
+    serialized['arguments'] = ['01']
+    with pytest.raises(CustomPriceFormulaError, match='Invalid decimal integer argument'):
+        deserialize_call_definition(serialized)
 
 
 def test_custom_current_price_oracle(database, inquirer) -> None:

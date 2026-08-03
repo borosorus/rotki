@@ -32,6 +32,7 @@ FORMULA_VERSION = 1
 INTEGER_TYPE_RE = re.compile(r'^(u?int)(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)$')  # noqa: E501
 METHOD_RE = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$')
 NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+DECIMAL_INTEGER_RE = re.compile(r'^-?(0|[1-9][0-9]*)$')
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
@@ -43,7 +44,7 @@ class CustomPriceFormulaError(Exception):
             stage: Literal['validation', 'call', 'expression', 'conversion'] = 'validation',
             call: str | None = None,
             address: ChecksumEvmAddress | None = None,
-            completed_calls: tuple[dict[str, str | int], ...] = (),
+            completed_calls: tuple[dict[str, str], ...] = (),
     ) -> None:
         super().__init__(message)
         self.stage = stage
@@ -78,7 +79,9 @@ class ContractCallDefinition:
             'address': self.address,
             'method': self.method,
             'arguments': [
-                argument.serialize() if isinstance(argument, ContextCallArgument) else argument
+                argument.serialize()
+                if isinstance(argument, ContextCallArgument)
+                else str(argument)
                 for argument in self.arguments
             ],
             'output_type': self.output_type,
@@ -113,11 +116,11 @@ class ContractCallResult:
     raw_value: int
     normalized_value: FVal
 
-    def serialize(self) -> dict[str, str | int]:
+    def serialize(self) -> dict[str, str]:
         return {
             'name': self.name,
             'address': self.address,
-            'raw_value': self.raw_value,
+            'raw_value': str(self.raw_value),
             'normalized_value': str(self.normalized_value),
         }
 
@@ -133,10 +136,16 @@ class CustomPriceEvaluation:
 def deserialize_call_definition(data: dict[str, Any]) -> ContractCallDefinition:
     arguments: list[CallArgument] = []
     for argument in data['arguments']:
-        if isinstance(argument, bool) or not isinstance(argument, int | dict):
-            raise CustomPriceFormulaError('Call arguments must be integers or context objects')
+        if isinstance(argument, bool) or not isinstance(argument, int | str | dict):
+            raise CustomPriceFormulaError(
+                'Call arguments must be decimal integer strings or context objects',
+            )
         if isinstance(argument, int):
             arguments.append(argument)
+        elif isinstance(argument, str):
+            if DECIMAL_INTEGER_RE.fullmatch(argument) is None:
+                raise CustomPriceFormulaError(f'Invalid decimal integer argument: {argument}')
+            arguments.append(int(argument))
         elif argument != {'context': 'one_token'}:
             raise CustomPriceFormulaError(f'Unsupported call argument context: {argument!s}')
         else:
