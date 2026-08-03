@@ -1018,6 +1018,19 @@ CREATE TABLE IF NOT EXISTS blockchain_balances_cache (
 ) WITHOUT ROWID;
 """
 
+DB_CREATE_CUSTOM_ASSET_PRICE_FORMULAS = """
+CREATE TABLE IF NOT EXISTS custom_asset_price_formulas (
+    asset TEXT PRIMARY KEY NOT NULL,
+    quote_asset TEXT NOT NULL,
+    expression TEXT NOT NULL,
+    calls_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE ON DELETE CASCADE,
+    FOREIGN KEY(quote_asset) REFERENCES assets(identifier) ON UPDATE CASCADE ON DELETE CASCADE
+);
+"""
+
 # Stores metrics for history events including balance, pnl, and cost_basis data.
 # Each row represents a metric for a specific bucket after the event is applied.
 # Bucket = (location, location_label, protocol, asset) where:
@@ -1184,6 +1197,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_LIDO_CSM_NODE_OPERATOR_METRICS}
 {DB_CREATE_HISTORICAL_BALANCE_CACHE}
 {DB_CREATE_BLOCKCHAIN_BALANCES_CACHE}
+{DB_CREATE_CUSTOM_ASSET_PRICE_FORMULAS}
 {DB_CREATE_DATA_ISSUES}
 {DB_CREATE_EVENT_METRICS}
 {DB_CREATE_INDEXES}

@@ -426,4 +426,19 @@ CREATE TABLE IF NOT EXISTS bitcoin_tx_mappings (
             (json.dumps(orders),),
         )
 
+    @progress_step(description='Adding custom asset price formulas table.')
+    def _add_custom_asset_price_formulas(write_cursor: DBCursor) -> None:
+        write_cursor.execute("""
+CREATE TABLE IF NOT EXISTS custom_asset_price_formulas (
+    asset TEXT PRIMARY KEY NOT NULL,
+    quote_asset TEXT NOT NULL,
+    expression TEXT NOT NULL,
+    calls_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE ON DELETE CASCADE,
+    FOREIGN KEY(quote_asset) REFERENCES assets(identifier) ON UPDATE CASCADE ON DELETE CASCADE
+);
+""")
+
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler)

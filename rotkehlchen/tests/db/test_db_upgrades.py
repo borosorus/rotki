@@ -4176,6 +4176,7 @@ def test_upgrade_db_52_to_53(
     with db_v52.conn.write_ctx() as write_cursor:
         assert not table_exists(cursor=write_cursor, name='event_metrics')
         assert not table_exists(cursor=write_cursor, name='data_issues')
+        assert not table_exists(cursor=write_cursor, name='custom_asset_price_formulas')
         for table_name in (
             'bitcoin_transactions',
             'bitcoin_tx_io',
@@ -4455,6 +4456,7 @@ def test_upgrade_db_52_to_53(
         }
         assert table_exists(cursor=cursor, name='event_metrics')
         assert table_exists(cursor=cursor, name='data_issues')
+        assert table_exists(cursor=cursor, name='custom_asset_price_formulas')
         for index_name in (
             'idx_event_metrics_event',
             'idx_event_metrics_location_label',
