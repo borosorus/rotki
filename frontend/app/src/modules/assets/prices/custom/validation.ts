@@ -6,6 +6,45 @@ const INTEGER_PATTERN = /^-?(0|[1-9][0-9]*)$/;
 const INTEGER_TYPE_PATTERN = /^(u?int)(8|16|24|32|40|48|56|64|72|80|88|96|104|112|120|128|136|144|152|160|168|176|184|192|200|208|216|224|232|240|248|256)$/;
 const METHOD_PATTERN = /^([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$/;
 const EXPRESSION_TOKEN_PATTERN = /\s*(?:((?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|([()+\-*/]))/y;
+const PYTHON_KEYWORDS = new Set([
+  'False',
+  'None',
+  'True',
+  'and',
+  'as',
+  'assert',
+  'async',
+  'await',
+  'break',
+  'class',
+  'continue',
+  'def',
+  'del',
+  'elif',
+  'else',
+  'except',
+  'finally',
+  'for',
+  'from',
+  'global',
+  'if',
+  'import',
+  'in',
+  'is',
+  'lambda',
+  'nonlocal',
+  'not',
+  'or',
+  'pass',
+  'raise',
+  'return',
+  'try',
+  'while',
+  'with',
+  'yield',
+]);
+
+type Translation = ReturnType<typeof useI18n>['t'];
 
 export const SOLIDITY_INTEGER_TYPES: string[] = Array.from({ length: 32 }, (_, index) => (index + 1) * 8)
   .flatMap(bits => [`uint${bits}`, `int${bits}`]);
@@ -63,16 +102,20 @@ interface ExpressionState {
   expectValue: boolean;
 }
 
-function processExpressionOperator(operator: string, state: ExpressionState): string | undefined {
+function processExpressionOperator(
+  operator: string,
+  state: ExpressionState,
+  t: Translation,
+): string | undefined {
   if (operator === '(') {
     if (!state.expectValue)
-      return 'An operator is required before a parenthesis';
+      return t('custom_price_formulas.validation.operator_before_parenthesis');
     state.depth++;
     return undefined;
   }
   if (operator === ')') {
     if (state.expectValue || state.depth === 0)
-      return 'Parentheses are not balanced';
+      return t('custom_price_formulas.validation.unbalanced_parentheses');
     state.depth--;
     state.expectValue = false;
     return undefined;
@@ -82,7 +125,7 @@ function processExpressionOperator(operator: string, state: ExpressionState): st
     return undefined;
   }
   if (state.expectValue)
-    return 'An arithmetic operator is missing an operand';
+    return t('custom_price_formulas.validation.missing_operand');
   state.expectValue = true;
   return undefined;
 }
@@ -91,58 +134,64 @@ function processExpressionToken(
   match: RegExpExecArray,
   variables: Set<string>,
   state: ExpressionState,
+  t: Translation,
 ): string | undefined {
   const [, number, identifier, operator] = match;
   if (!number && !identifier)
-    return processExpressionOperator(operator, state);
+    return processExpressionOperator(operator, state, t);
   if (!state.expectValue)
-    return 'An operator is required between values';
+    return t('custom_price_formulas.validation.operator_between_values');
   if (identifier && !variables.has(identifier))
-    return `Unknown call result: ${identifier}`;
+    return t('custom_price_formulas.validation.unknown_call_result', { identifier });
   state.expectValue = false;
   return undefined;
 }
 
-function validateExpression(expression: string, variables: Set<string>): string | undefined {
+function validateExpression(
+  expression: string,
+  variables: Set<string>,
+  t: Translation,
+): string | undefined {
   let index = 0;
   const state: ExpressionState = { depth: 0, expectValue: true };
   while (index < expression.length) {
     EXPRESSION_TOKEN_PATTERN.lastIndex = index;
     const match = EXPRESSION_TOKEN_PATTERN.exec(expression);
     if (!match)
-      return 'Only numbers, call names, parentheses, and + - * / are allowed';
+      return t('custom_price_formulas.validation.invalid_expression_element');
     index = EXPRESSION_TOKEN_PATTERN.lastIndex;
-    const tokenError = processExpressionToken(match, variables, state);
+    const tokenError = processExpressionToken(match, variables, state, t);
     if (tokenError)
       return tokenError;
   }
   if (state.depth !== 0)
-    return 'Parentheses are not balanced';
+    return t('custom_price_formulas.validation.unbalanced_parentheses');
   if (state.expectValue)
-    return 'The expression is incomplete';
+    return t('custom_price_formulas.validation.incomplete_expression');
   return undefined;
 }
 
 function validateCallArguments(
   call: ContractCallDefinition,
   parsed: ParsedMethod | undefined,
+  t: Translation,
 ): string | undefined {
   if (!parsed)
     return undefined;
   if (parsed.inputTypes.length !== call.arguments.length)
-    return 'The argument count must match the method signature';
+    return t('custom_price_formulas.validation.argument_count');
   if (call.arguments.some((argument, index) =>
     typeof argument === 'string' && !validateIntegerLiteral(argument, parsed.inputTypes[index]))) {
-    return 'Enter integer literals within their Solidity type range';
+    return t('custom_price_formulas.validation.integer_range');
   }
   return undefined;
 }
 
-function validateCallName(name: string, names: Set<string>): string | undefined {
-  if (!IDENTIFIER_PATTERN.test(name))
-    return 'Use a unique identifier containing letters, numbers, and underscores';
+function validateCallName(name: string, names: Set<string>, t: Translation): string | undefined {
+  if (!IDENTIFIER_PATTERN.test(name) || PYTHON_KEYWORDS.has(name))
+    return t('custom_price_formulas.validation.invalid_call_name');
   if (names.has(name))
-    return 'Call result names must be unique';
+    return t('custom_price_formulas.validation.duplicate_call_name');
   return undefined;
 }
 
@@ -151,47 +200,51 @@ function validateCall(
   index: number,
   names: Set<string>,
   errors: FormulaValidationErrors,
+  t: Translation,
 ): void {
   const callErrors: Record<string, string> = {};
-  const nameError = validateCallName(call.name, names);
+  const nameError = validateCallName(call.name, names, t);
   if (nameError)
     callErrors.name = nameError;
   names.add(call.name);
 
   if (!isValidEthAddress(call.address))
-    callErrors.address = 'Enter a valid EVM contract address';
+    callErrors.address = t('custom_price_formulas.validation.invalid_address');
   const parsed = parseMethodSignature(call.method);
   if (!parsed)
-    callErrors.method = 'Use a Solidity signature with integer arguments only';
+    callErrors.method = t('custom_price_formulas.validation.invalid_method');
   if (!INTEGER_TYPE_PATTERN.test(call.outputType))
-    callErrors.outputType = 'Select a supported integer output type';
+    callErrors.outputType = t('custom_price_formulas.validation.invalid_output_type');
   if (!Number.isInteger(call.outputDecimals) || call.outputDecimals < 0 || call.outputDecimals > 255)
-    callErrors.outputDecimals = 'Output decimals must be between 0 and 255';
-  const argumentError = validateCallArguments(call, parsed);
+    callErrors.outputDecimals = t('custom_price_formulas.validation.output_decimals');
+  const argumentError = validateCallArguments(call, parsed, t);
   if (argumentError)
     callErrors.arguments = argumentError;
   if (Object.keys(callErrors).length > 0)
     errors.calls[index] = callErrors;
 }
 
-export function validateCustomPriceFormula(formula: CustomPriceFormula): FormulaValidationErrors {
+export function validateCustomPriceFormula(
+  formula: CustomPriceFormula,
+  t: Translation,
+): FormulaValidationErrors {
   const errors: FormulaValidationErrors = { calls: {} };
   if (!formula.asset)
-    errors.asset = 'Select an EVM token';
+    errors.asset = t('custom_price_formulas.validation.target_asset_required');
   if (!formula.quoteAsset)
-    errors.quoteAsset = 'Select a quote asset';
+    errors.quoteAsset = t('custom_price_formulas.validation.quote_asset_required');
   else if (formula.asset === formula.quoteAsset)
-    errors.quoteAsset = 'The quote asset must differ from the target asset';
+    errors.quoteAsset = t('custom_price_formulas.validation.same_assets');
   if (formula.calls.length === 0)
-    errors.schema = 'Add at least one contract call';
+    errors.schema = t('custom_price_formulas.validation.call_required');
 
   const names = new Set<string>();
-  formula.calls.forEach((call, index) => validateCall(call, index, names, errors));
+  formula.calls.forEach((call, index) => validateCall(call, index, names, errors, t));
   if (!formula.expression) {
-    errors.expression = 'Enter a price expression';
+    errors.expression = t('custom_price_formulas.validation.expression_required');
   }
   else {
-    const expressionError = validateExpression(formula.expression.trim(), names);
+    const expressionError = validateExpression(formula.expression.trim(), names, t);
     if (expressionError)
       errors.expression = expressionError;
   }

@@ -9,7 +9,7 @@ interface UseCustomPriceFormulasReturn {
   formulas: ComputedRef<CustomPriceFormula[]>;
   loading: Readonly<Ref<boolean>>;
   refresh: () => Promise<void>;
-  saveFormula: (formula: CustomPriceFormula) => Promise<CustomPriceFormula | undefined>;
+  saveFormula: (formula: CustomPriceFormula) => Promise<CustomPriceFormula>;
   setEnabled: (formula: CustomPriceFormula, enabled: boolean) => Promise<boolean>;
   testFormula: (formula: CustomPriceFormulaTestPayload) => Promise<CustomPriceFormulaTestResult | undefined>;
 }
@@ -36,22 +36,16 @@ export function useCustomPriceFormulas(): UseCustomPriceFormulasReturn {
     }
   }
 
-  async function saveFormula(formula: CustomPriceFormula): Promise<CustomPriceFormula | undefined> {
-    try {
-      const saved = await api.saveFormula(formula);
-      const existingIndex = get(items).findIndex(item => item.asset === saved.asset);
-      const updated = [...get(items)];
-      if (existingIndex >= 0)
-        updated[existingIndex] = saved;
-      else
-        updated.push(saved);
-      set(items, updated);
-      return saved;
-    }
-    catch (error: unknown) {
-      showErrorMessage(t('custom_price_formulas.messages.save_title'), getErrorMessage(error));
-      throw error;
-    }
+  async function saveFormula(formula: CustomPriceFormula): Promise<CustomPriceFormula> {
+    const saved = await api.saveFormula(formula);
+    const existingIndex = get(items).findIndex(item => item.asset === saved.asset);
+    const updated = [...get(items)];
+    if (existingIndex >= 0)
+      updated[existingIndex] = saved;
+    else
+      updated.push(saved);
+    set(items, updated);
+    return saved;
   }
 
   async function deleteFormula(formula: CustomPriceFormula): Promise<boolean> {
@@ -71,7 +65,8 @@ export function useCustomPriceFormulas(): UseCustomPriceFormulasReturn {
       await saveFormula({ ...formula, enabled });
       return true;
     }
-    catch {
+    catch (error: unknown) {
+      showErrorMessage(t('custom_price_formulas.messages.save_title'), getErrorMessage(error));
       return false;
     }
   }

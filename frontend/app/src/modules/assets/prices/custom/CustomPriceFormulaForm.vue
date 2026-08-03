@@ -74,7 +74,7 @@ function removeCall(index: number): void {
 }
 
 function validate(): boolean {
-  const result = validateCustomPriceFormula(get(modelValue));
+  const result = validateCustomPriceFormula(get(modelValue), t);
   set(errors, result);
   return !hasFormulaValidationErrors(result);
 }

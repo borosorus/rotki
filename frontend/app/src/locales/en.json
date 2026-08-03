@@ -2395,6 +2395,28 @@
       "success": "Formula price",
       "target_asset": "Convert test result to (optional)",
       "title": "Test formula"
+    },
+    "validation": {
+      "argument_count": "The argument count must match the method signature",
+      "call_required": "Add at least one contract call",
+      "duplicate_call_name": "Call result names must be unique",
+      "expression_required": "Enter a price expression",
+      "incomplete_expression": "The expression is incomplete",
+      "integer_range": "Enter integer literals within their Solidity type range",
+      "invalid_address": "Enter a valid EVM contract address",
+      "invalid_call_name": "Use a non-reserved identifier containing letters, numbers, and underscores",
+      "invalid_expression_element": "Only numbers, call names, parentheses, and + - * / are allowed",
+      "invalid_method": "Use a Solidity signature with integer arguments only",
+      "invalid_output_type": "Select a supported integer output type",
+      "missing_operand": "An arithmetic operator is missing an operand",
+      "operator_before_parenthesis": "An operator is required before a parenthesis",
+      "operator_between_values": "An operator is required between values",
+      "output_decimals": "Output decimals must be between 0 and 255",
+      "quote_asset_required": "Select a quote asset",
+      "same_assets": "The quote asset must differ from the target asset",
+      "target_asset_required": "Select an EVM token",
+      "unbalanced_parentheses": "Parentheses are not balanced",
+      "unknown_call_result": "Unknown call result: {identifier}"
     }
   },
   "customized_event_duplicates": {

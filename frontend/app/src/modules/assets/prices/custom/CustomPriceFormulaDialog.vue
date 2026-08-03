@@ -53,11 +53,10 @@ async function save(): Promise<boolean> {
   set(loading, true);
   set(serverError, '');
   try {
-    if (await saveFormula(data)) {
-      set(open, false);
-      emit('refresh');
-      return true;
-    }
+    await saveFormula(data);
+    set(open, false);
+    emit('refresh');
+    return true;
   }
   catch (error: unknown) {
     set(serverError, error instanceof ApiValidationError

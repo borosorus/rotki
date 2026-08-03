@@ -2,6 +2,10 @@ import type { CustomPriceFormula } from './types';
 import { describe, expect, it } from 'vitest';
 import { hasFormulaValidationErrors, parseMethodSignature, rebuildArguments, validateCustomPriceFormula, validateIntegerLiteral } from './validation';
 
+function t(key: string, parameters?: Record<string, unknown>): string {
+  return typeof parameters?.identifier === 'string' ? `${key}:${parameters.identifier}` : key;
+}
+
 function formula(): CustomPriceFormula {
   return {
     asset: 'eip155:1/erc20:0x0000000000000000000000000000000000000001',
@@ -46,20 +50,27 @@ describe('custom price formula validation', () => {
   });
 
   it('should accept a valid formula', () => {
-    expect(hasFormulaValidationErrors(validateCustomPriceFormula(formula()))).toBe(false);
+    expect(hasFormulaValidationErrors(validateCustomPriceFormula(formula(), t))).toBe(false);
     expect(hasFormulaValidationErrors(validateCustomPriceFormula({
       ...formula(),
       expression: ' .5 * assets_per_share ',
-    }))).toBe(false);
+    }, t))).toBe(false);
   });
 
   it('should reject duplicate names, invalid arguments, and unknown expression variables', () => {
     const data = formula();
     data.calls.push({ ...data.calls[0], arguments: ['-1'] });
     data.expression = 'assets_per_share + unknown';
-    const errors = validateCustomPriceFormula(data);
-    expect(errors.calls[1].name).toContain('unique');
-    expect(errors.calls[1].arguments).toContain('range');
-    expect(errors.expression).toContain('Unknown');
+    const errors = validateCustomPriceFormula(data, t);
+    expect(errors.calls[1].name).toBe('custom_price_formulas.validation.duplicate_call_name');
+    expect(errors.calls[1].arguments).toBe('custom_price_formulas.validation.integer_range');
+    expect(errors.expression).toBe('custom_price_formulas.validation.unknown_call_result:unknown');
+  });
+
+  it('should reject call names that the backend expression parser reserves', () => {
+    const data = formula();
+    data.calls[0].name = 'lambda';
+    expect(validateCustomPriceFormula(data, t).calls[0].name)
+      .toBe('custom_price_formulas.validation.invalid_call_name');
   });
 });
