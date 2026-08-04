@@ -13,6 +13,7 @@ const resolvers = {
   resolveHex: (value: string): string => `hex:${value}`,
   resolveAssetChain: (value: string): string | undefined => (value.startsWith('eip155:8453') ? 'base' : undefined),
   resolveAssetSymbol: (value: string): string => `symbol:${value}`,
+  resolveChainName: (value: string): string => `chain:${value}`,
   resolveEventSubTypeName: (value: string): string => `subtype:${value}`,
   resolveEventTypeName: (value: string): string => `type:${value}`,
   resolveLocationName: (value: string): string => `name:${value}`,
@@ -243,6 +244,7 @@ describe('toHistoryAccountField', () => {
       resolveCaption: (address: string): string => `caption:${address}`,
       resolveKeywords: (address: string): string => `${address} alice.eth`,
       resolveLabel: (address: string): string => `label:${address}`,
+      resolveLoading: (): boolean => false,
       suggest: (): string[] => ['0xabc', '0xdef'],
     });
     expect(field).toMatchObject({
@@ -262,6 +264,7 @@ describe('toHistoryAccountField', () => {
       resolveCaption: (): undefined => undefined,
       resolveKeywords: (address: string): string => `${address} alice.eth`,
       resolveLabel: (address: string): string => `label:${address}`,
+      resolveLoading: (): boolean => false,
       suggest: (): string[] => ['0xabc', '0xdef'],
     });
     expect(field.suggest?.()).toStrictEqual(['0xabc', '0xdef']);

@@ -21,8 +21,17 @@ const operatorLabels = useOperatorLabels();
 
 const operators = computed<readonly FilterOp[]>(() => operatorsFor(field));
 const showOperators = computed<boolean>(() => get(operators).length > 1);
+// Every option carries what the field can resolve for it, not just its label: an account's label
+// is a name, or a shortened and scrambled address, so without the caption two accounts sharing a
+// name are indistinguishable and without the keywords a pasted full address matches nothing.
 const enumOptions = computed<SelectOption[]>(
-  () => (field.suggest?.() ?? []).map(value => ({ label: field.resolveLabel?.(value) ?? value, value })),
+  () => (field.suggest?.() ?? []).map(value => ({
+    caption: field.resolveCaption?.(value),
+    keywords: field.resolveKeywords?.(value),
+    label: field.resolveLabel?.(value) ?? value,
+    loading: field.resolveLoading?.(value),
+    value,
+  })),
 );
 
 const selected = computed<string[]>({
@@ -73,12 +82,13 @@ function setOperator(op: FilterOp | FilterOp[] | undefined): void {
       @close="emit('close')"
     >
       <template
-        v-if="field.display || field.resolveIcon"
+        v-if="field.display || field.resolveIcon || field.resolveSwatch"
         #icon="{ value }"
       >
         <PillValueIcon
           :display="field.display"
           :icon="field.resolveIcon?.(value)"
+          :swatch="field.resolveSwatch?.(value)"
           :value="value"
           size="18px"
         />
