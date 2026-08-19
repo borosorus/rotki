@@ -49,6 +49,12 @@ OWNERSHIP_TRANSFERRED_TOPIC: Final = bytes.fromhex(
 # Selectors for calls made directly to dynamically-created PositionV2 contracts.
 ADJUST_POSITION_SELECTOR: Final = b'o\x87\x1c\xec'  # adjust(uint256,uint256,uint256)
 ADJUST_PRICE_SELECTOR: Final = b'r\xbf\x07\x9e'  # adjustPrice(uint256)
+# Clone a position for the transaction sender.
+CLONE_POSITION_SELECTOR: Final = bytes.fromhex('2e2c6314')
+# Clone a position while assigning another owner.
+CLONE_POSITION_FOR_SELECTOR: Final = bytes.fromhex('9d8ff2a6')
+# Clone a position and override its initial price.
+CLONE_WITH_PRICE_SELECTOR: Final = bytes.fromhex('c9776b39')
 MINT_ZCHF_SELECTOR: Final = b'@\xc1\x0f\x19'  # mint(address,uint256)
 REPAY_ZCHF_SELECTOR: Final = b'7\x1f\xd8\xe6'  # repay(uint256)
 TRANSFER_OWNERSHIP_SELECTOR: Final = b'\xf2\xfd\xe3\x8b'  # transferOwnership(address)

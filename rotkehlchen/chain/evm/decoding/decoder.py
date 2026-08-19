@@ -30,6 +30,9 @@ from rotkehlchen.chain.evm.decoding.beefy_finance.decoder import BeefyFinanceCom
 from rotkehlchen.chain.evm.decoding.cowswap.constants import COWSWAP_SUPPORTED_CHAINS_WITHOUT_VCOW
 from rotkehlchen.chain.evm.decoding.cowswap.decoder import CowswapCommonDecoder
 from rotkehlchen.chain.evm.decoding.erc4337.decoder import Erc4337Decoder
+from rotkehlchen.chain.evm.decoding.frankencoin.lending.decoder import (
+    FrankencoinLendingDecoder,
+)
 from rotkehlchen.chain.evm.decoding.frankencoin.savings.constants import (
     SUPPORTED_ZCHF_SAVINGS_CHAINS,
 )
@@ -281,6 +284,12 @@ class EVMTransactionDecoder(TransactionDecoder['EvmTransaction', EvmDecodingRule
             self._add_single_decoder(class_name='BeefyFinance', decoder_class=BeefyFinanceCommonDecoder, rules=rules)  # noqa: E501
         if self.evm_inquirer.chain_id in SUPPORTED_ZCHF_SAVINGS_CHAINS:
             self._add_single_decoder(class_name='FrankencoinSavings', decoder_class=FrankencoinSavingsCommonDecoder, rules=rules)  # noqa: E501
+        if self.evm_inquirer.chain_id == ChainID.ETHEREUM:
+            self._add_single_decoder(
+                class_name='FrankencoinLending',
+                decoder_class=FrankencoinLendingDecoder,
+                rules=rules,
+            )
         self._add_single_decoder(class_name='Merkl', decoder_class=MerklDecoder, rules=rules)
         if self.evm_inquirer.chain_id in CFA_V1_ADDRESSES:
             self._add_single_decoder(class_name='Superfluid', decoder_class=SuperfluidCommonDecoder, rules=rules)  # noqa: E501
