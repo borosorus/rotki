@@ -1,0 +1,1 @@
+"""Frankencoin collateralized lending decoding."""
