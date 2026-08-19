@@ -97,7 +97,7 @@ class FrankencoinMintDetails:
 
 
 class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
-    """Inactive implementation skeleton for Frankencoin V2 lending on Ethereum."""
+    """Decode borrower activity for Frankencoin V2 lending on Ethereum."""
 
     def __init__(
             self,

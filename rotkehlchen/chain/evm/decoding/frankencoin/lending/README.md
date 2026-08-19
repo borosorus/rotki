@@ -1,102 +1,76 @@
 # Frankencoin V2 lending
 
-This package is an inactive implementation skeleton. Frankencoin lending is deployed only on
-Ethereum; this package targets V2. Do not register the decoder or balance class until their TODOs and
-fixtures are complete.
+This package decodes and values borrower-owned Frankencoin V2 positions on Ethereum. Savings is a
+separate Frankencoin module because it has a different contract model and is deployed on more chains.
 
-## Protocol model
+## Position model
 
-Each loan is a `PositionV2` contract. It directly holds one collateral token and records gross zCHF
-debt (`minted`), a liquidation price, a reserve contribution, and an owner. Positions may be original
-or clones; clones share an original position's minting limit.
+A loan is represented by its own `PositionV2` contract rather than by a transferable position token.
+The contract owns one collateral token, records gross zCHF debt and its reserve contribution, and has
+one mutable owner. An original position defines minting terms; clones reuse those terms and share the
+original position's minting limit.
 
-Position addresses are dynamic. Before decoding a position log, require:
+Position addresses are dynamic and an arbitrary contract can emit lookalike events. Before treating
+an address as a position, the integration checks:
 
 ```text
 zCHF.getPositionParent(position) == MINTING_HUB_V2
 ```
 
-Load mutable state such as `owner()` at the transaction block, not at `latest`. Only verified identity
-and immutable collateral metadata may be cached across blocks.
+Historical decoding reads mutable state, especially `owner()`, at the transaction block. Reading it
+at `latest` would attribute old actions to a later owner. Immutable collateral metadata can be cached
+after the registry check.
 
-## Decoder structure
+## Events shown in history
 
-The V2 hub and roller have fixed-address callbacks. Direct position calls are routed by function
-selector and event topic. Each operation keeps its own decoder because its transfers have different
-meaning; `_get_position_metadata()` only authenticates the position and loads shared state.
+The decoder covers opening originals, cloning (including CloneHelper), minting, repayment, combined
+collateral/debt adjustment, price adjustment, collateral withdrawal and closure, ownership transfer,
+direct collateral deposits, and rolling debt or collateral between positions.
 
-| Operation | Required result |
-| --- | --- |
-| Open original | Collateral deposit plus the separate 1,000 zCHF opening fee |
-| Clone / CloneHelper | Collateral deposit and optional mint; hide intermediate ownership and forwarding |
-| `mint()` | Usable zCHF as `WITHDRAWAL/GENERATE_DEBT`, plus financed fee as `SPEND/FEE` |
-| `repay()` | Actual payer spend as `SPEND/PAYBACK_DEBT`; retain a different owner/payer |
-| `adjust()` | Every collateral/debt delta, ordered deposit → mint or repayment → withdrawal |
-| `adjustPrice()` | One informational event and no asset movement |
-| Collateral withdrawal | `WITHDRAWAL/WITHDRAW_FROM_PROTOCOL`, alternate recipient, and closure if applicable |
-| Ownership transfer | One informational event; ignore helper-internal transfers already covered by clone |
-| Roller | Source repayment/withdrawal plus target deposit/mint; remove flash-mint plumbing |
-| Plain collateral transfer | Deposit enrichment using a verified-position cache |
+The user-facing event sequence describes the economic action rather than every internal ERC20
+transfer. Important examples are:
 
-`MintingUpdate(collateral, price, minted)` contains resulting totals, not deltas. Match and transform
-the ERC20 events already decoded by rotki, then use `maybe_reshuffle_events()` where ordering matters.
-Create a new event only when a tracked position owner has no tracked transfer endpoint.
+- Minting produces a `WITHDRAWAL/GENERATE_DEBT` for usable zCHF and a separate `SPEND/FEE`. Reserve
+  zCHF minted to the protocol is not a user receive.
+- Repayment produces `SPEND/PAYBACK_DEBT` for the amount actually funded by the user. Reserve release
+  can make the gross debt reduction larger than that spend.
+- `adjust()` can combine collateral and debt changes. Its events are ordered as collateral deposit,
+  debt mint or repayment, then collateral withdrawal.
+- A roll uses a temporary flash mint internally. The history instead shows the source position's
+  repayment/withdrawal and the target position's deposit/mint/fee.
+- CloneHelper forwarding and intermediate ownership transfers are folded into the clone operation.
 
-### Reserve accounting
+The position owner, collateral payer, zCHF recipient, repayer, and collateral recipient may be
+different addresses. Events are attributed to the tracked position owner while notes and transfer
+matching preserve the other party where relevant.
 
-Gross debt is not the zCHF received or repaid by the user:
+`MintingUpdate(collateral, price, minted)` reports the resulting totals, not deltas. The decoder uses
+those totals together with the transaction's ERC20 transfers and protocol logs. It transforms generic
+rotki transfer events where possible so the same movement is never counted twice.
 
-- Minting sends usable zCHF to the target and sends reserve contribution plus fees to the protocol
-  reserve. The zCHF `Profit` log identifies the financed fee. Do not expose the reserve mint as a user
-  receive.
-- Direct repayment spends the user's non-reserve portion; released reserve accounts for the larger
-  gross debt decrease.
-- `adjust()` repayment first transfers assigned reserve to the owner and then burns gross zCHF from
-  them. Collapse those generic receive/burn events into one net repayment.
+## Discovery and balances
 
-The position owner, collateral payer, zCHF recipient, repayer, and collateral recipient may differ.
-Attribute protocol activity to the tracked owner while preserving other parties in notes or metadata.
+Each lending event stores `position_address` in `extra_data`. Clone/open events also identify the
+original position, while rolls identify their source and target. Balance discovery uses these stable
+fields; it never parses event notes or assumes a position remains with its historical owner.
 
-### Position metadata
+On every balance query, candidates discovered from history are re-authenticated and queried for their
+current owner, collateral token, collateral balance, gross debt, and reserve contribution. Candidates
+that fail independently are skipped, and positions no longer owned by a tracked address are omitted.
 
-Every lending event must include `position_address` in `extra_data`. Opening/clone events also include
-`original_position_address`; roller events include `source_position_address` and
-`target_position_address`. Balance discovery depends on these keys and must not parse notes.
-
-When nested logs describe one operation, decode at the highest level: `PositionOpened` for open/clone
-flows and `Roll` for roller flows. Inner `MintingUpdate`, ownership, reserve, mint, burn, and forwarding
-events are evidence, not additional user actions.
-
-## Balance representation
-
-History events discover candidate position contracts; current balances come from on-chain queries.
-For every candidate:
-
-1. Verify it through the zCHF position registry.
-2. Query its current owner and keep it only if that owner is tracked.
-3. Query its collateral token and `balanceOf(position)`.
-4. Query `minted`, `reserveContribution`, and the currently assigned reserve.
-
-Expose:
+Balances are presented as:
 
 ```text
 assets[collateral][frankencoin] = collateral.balanceOf(position)
-liabilities[zCHF][frankencoin] = minted - assigned_reserve
+liabilities[zCHF][frankencoin] = minted - calculateAssignedReserve(minted, reserveContribution)
 ```
 
-The liability is the effective zCHF obligation, not gross debt. This avoids understating net worth by
-counting gross debt without the inaccessible reserve that offsets it. Aggregate multiple positions per
-owner, skip zero values, tolerate individual bad candidates, and batch state and pricing queries.
+The liability is the effective zCHF obligation. Gross debt includes protocol-controlled assigned
+reserve that the owner cannot use, so showing gross debt without that offset would understate net
+worth. Multiple positions and collateral types are aggregated per current owner and priced in batch.
 
-## Scope and tests
+## Scope
 
-Liquidations, challenges, forced/expired sales, postponed collateral returns, V1, savings, equity, and
-bridges are outside this package.
-
-Before registration, test originals, both clone overloads, CloneHelper price cases, mint recipients,
-partial/full and third-party repayment, every `adjust()` direction, price-only updates, both collateral
-withdrawal entry points, unrelated-token rescue, direct collateral transfer, closure, ownership change,
-roller variants, and multi-action transactions. Reject unrelated contracts with matching topics.
-
-Balance tests must cover multiple positions, ownership transfer, zero debt with collateral, reserve
-impairment, collateral decimals, invalid/stale candidates, and asset/liability aggregation.
+This integration is limited to the Ethereum V2 borrower lifecycle. Liquidations, challenges,
+forced or expired sales, postponed collateral returns, V1, savings, equity, and bridges are outside
+this package.
