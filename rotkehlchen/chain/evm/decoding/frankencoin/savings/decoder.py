@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.utils import TokenEncounterInfo, token_normalized_value_decimals
-from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
 from rotkehlchen.chain.evm.decoding.frankencoin.constants import (
     CPT_FRANKENCOIN,
     ZCHF_ADDRESS,
@@ -48,41 +47,6 @@ class FrankencoinSavingsCommonDecoder(FrankencoinCommonDecoder):
             address=self.zchf_address,
             encounter=TokenEncounterInfo(should_notify=False),
         )
-
-    def _get_transfer_party(
-            self,
-            context: DecoderContext,
-            amount: FVal,
-    ) -> ChecksumEvmAddress | None:
-        """Return the payer/receiver from the transfer immediately preceding a savings log."""
-        try:
-            current_log_position = context.all_logs.index(context.tx_log)
-        except ValueError:
-            return None
-
-        if current_log_position == 0:
-            return None
-
-        transfer_log = context.all_logs[current_log_position - 1]
-        if (
-            len(transfer_log.topics) != 3 or
-            transfer_log.address != self.zchf_address or
-            transfer_log.topics[0] != ERC20_OR_ERC721_TRANSFER
-        ):
-            return None
-
-        from_address = bytes_to_address(transfer_log.topics[1])
-        to_address = bytes_to_address(transfer_log.topics[2])
-        if (
-            self.savings_address not in (from_address, to_address) or
-            token_normalized_value_decimals(
-                token_amount=int.from_bytes(transfer_log.data),
-                token_decimals=ZCHF_DECIMALS,
-            ) != amount
-        ):
-            return None
-
-        return to_address if from_address == self.savings_address else from_address
 
     def _decode_savings_event(self, context: DecoderContext) -> EvmDecodingOutput:
         """Turn raw savings logs/transfers into rotki history events."""
@@ -142,7 +106,7 @@ class FrankencoinSavingsCommonDecoder(FrankencoinCommonDecoder):
                 event.amount == amount and
                 event.address == self.savings_address and
                 event.asset == self.zchf
-        ):
+            ):
             event.event_type = HistoryEventType.DEPOSIT
             event.event_subtype = HistoryEventSubType.DEPOSIT_TO_PROTOCOL
             event.counterparty = CPT_FRANKENCOIN
@@ -155,7 +119,13 @@ class FrankencoinSavingsCommonDecoder(FrankencoinCommonDecoder):
                 event.location_label = user_address
         else:
             # Deposit initiated from an untracked address
-            transfer_party = self._get_transfer_party(context=context, amount=amount)
+            transfer = self._get_previous_erc20_transfer(
+                context=context,
+                token=self.zchf,
+                target_address=self.savings_address,
+                amount=amount,
+            )
+            transfer_party = transfer.from_address if transfer is not None else None
             event_type = HistoryEventType.DEPOSIT
             event_subtype = HistoryEventSubType.DEPOSIT_TO_PROTOCOL
             notes = f'Deposit {amount} zCHF in Frankencoin Savings Module'
@@ -203,7 +173,13 @@ class FrankencoinSavingsCommonDecoder(FrankencoinCommonDecoder):
                 event.location_label = user_address
         else:
             # Withdrawal sent to an untracked address
-            transfer_party = self._get_transfer_party(context=context, amount=amount)
+            transfer = self._get_previous_erc20_transfer(
+                context=context,
+                token=self.zchf,
+                target_address=self.savings_address,
+                amount=amount,
+            )
+            transfer_party = transfer.to_address if transfer is not None else None
             event_type = HistoryEventType.WITHDRAWAL
             event_subtype = HistoryEventSubType.WITHDRAW_FROM_PROTOCOL
             notes = f'Withdraw {amount} zCHF from Frankencoin Savings Module'

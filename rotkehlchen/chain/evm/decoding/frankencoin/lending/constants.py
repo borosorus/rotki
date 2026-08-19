@@ -14,6 +14,11 @@ MINTING_HUB_V2: Final[ChecksumEvmAddress] = string_to_evm_address(
 POSITION_ROLLER_V2: Final[ChecksumEvmAddress] = string_to_evm_address(
     '0xAD0107D3Da540Fd54b1931735b65110C909ea6B6',
 )
+CLONE_HELPER_V2: Final[ChecksumEvmAddress] = string_to_evm_address(
+    '0x55cD2820735Db56ca0965BE224D71994265F8bee',
+)
+
+OPENING_FEE_RAW: Final = 1000 * 10 ** 18
 
 POSITION_ADDRESS_KEY: Final = 'position_address'
 ORIGINAL_POSITION_ADDRESS_KEY: Final = 'original_position_address'

@@ -1,20 +1,33 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from rotkehlchen.assets.utils import TokenEncounterInfo, token_normalized_value
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
+from rotkehlchen.chain.evm.decoding.frankencoin.constants import (
+    CPT_FRANKENCOIN,
+    ZCHF_ADDRESS,
+)
 from rotkehlchen.chain.evm.decoding.frankencoin.decoder import FrankencoinCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
     DEFAULT_EVM_DECODING_OUTPUT,
     FAILED_ENRICHMENT_OUTPUT,
+    EvmDecodingOutput,
 )
+from rotkehlchen.constants import ZERO
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import (
     ADJUST_POSITION_SELECTOR,
     ADJUST_PRICE_SELECTOR,
+    CLONE_HELPER_V2,
     MINT_ZCHF_SELECTOR,
     MINTING_HUB_V2,
     MINTING_UPDATE_TOPIC,
+    OPENING_FEE_RAW,
+    ORIGINAL_POSITION_ADDRESS_KEY,
     OWNERSHIP_TRANSFERRED_TOPIC,
+    POSITION_ADDRESS_KEY,
     POSITION_OPENED_TOPIC,
     POSITION_ROLLED_TOPIC,
     POSITION_ROLLER_V2,
@@ -28,13 +41,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rotkehlchen.assets.asset import EvmToken
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.decoding.structures import (
         DecoderContext,
         EnricherContext,
-        EvmDecodingOutput,
         TransferEnrichmentOutput,
     )
+    from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.types import ChecksumEvmAddress
+    from rotkehlchen.user_messages import MessagesAggregator
 
 
 @dataclass(frozen=True)
@@ -52,6 +67,23 @@ class FrankencoinPositionMetadata:
 class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
     """Inactive implementation skeleton for Frankencoin V2 lending on Ethereum."""
 
+    def __init__(
+            self,
+            evm_inquirer: EvmNodeInquirer,
+            base_tools: BaseEvmDecoderTools,
+            msg_aggregator: MessagesAggregator,
+    ) -> None:
+        super().__init__(
+            evm_inquirer=evm_inquirer,
+            base_tools=base_tools,
+            msg_aggregator=msg_aggregator,
+        )
+        self.zchf = self.base.get_or_create_evm_token(
+            address=ZCHF_ADDRESS[evm_inquirer.chain_id],
+            encounter=TokenEncounterInfo(should_notify=False),
+        )
+        self.verified_positions: dict[ChecksumEvmAddress, EvmToken] = {}
+
     def _get_position_metadata(
             self,
             context: DecoderContext,
@@ -68,14 +100,105 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
 
     def _decode_position_opened(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode an original position or clone created by the V2 hub."""
-        if len(context.tx_log.topics) == 0 or context.tx_log.topics[0] != POSITION_OPENED_TOPIC:
+        if (
+            len(context.tx_log.topics) != 3 or
+            len(context.tx_log.data) < 64 or
+            context.tx_log.topics[0] != POSITION_OPENED_TOPIC
+        ):
             return DEFAULT_EVM_DECODING_OUTPUT
 
-        # TODO: Decode owner, position, original, and collateral. Transform the initial collateral
-        # transfer into a deposit. Originals also pay the opening fee; clones may mint immediately.
-        # Attribute each flow to the owner while preserving a different payer/recipient. Store
-        # position_address and original_position_address in extra_data.
-        return DEFAULT_EVM_DECODING_OUTPUT
+        emitted_owner = bytes_to_address(context.tx_log.topics[1])
+        position = bytes_to_address(context.tx_log.topics[2])
+        original = bytes_to_address(context.tx_log.data[:32])
+        collateral = self.base.get_or_create_evm_token(
+            address=bytes_to_address(context.tx_log.data[32:64]),
+        )
+        self.verified_positions[position] = collateral
+
+        is_clone_helper = context.transaction.to_address == CLONE_HELPER_V2
+        owner = context.transaction.from_address if is_clone_helper else emitted_owner
+        transfer = self._get_previous_erc20_transfer(
+            context=context,
+            token=collateral,
+            target_address=position,
+        )
+        payer = context.transaction.from_address if is_clone_helper else (
+            transfer.from_address if transfer is not None else emitted_owner
+        )
+        owner_is_tracked = self.base.is_tracked(owner)
+        payer_is_tracked = self.base.is_tracked(payer)
+        if owner_is_tracked is False and payer_is_tracked is False:
+            return DEFAULT_EVM_DECODING_OUTPUT
+
+        extra_data = {
+            POSITION_ADDRESS_KEY: position,
+            ORIGINAL_POSITION_ADDRESS_KEY: original,
+        }
+        collateral_amount = transfer.amount if transfer is not None else None
+        collateral_event = next((
+            event for event in reversed(context.decoded_events)
+            if event.event_type == HistoryEventType.SPEND and
+            event.event_subtype == HistoryEventSubType.NONE and
+            event.asset == collateral and
+            (collateral_amount is None or event.amount == collateral_amount)
+        ), None)
+        if collateral_event is not None:
+            collateral_event.event_type = HistoryEventType.DEPOSIT
+            collateral_event.event_subtype = HistoryEventSubType.DEPOSIT_TO_PROTOCOL
+            collateral_event.counterparty = CPT_FRANKENCOIN
+            collateral_event.address = position
+            collateral_event.extra_data = extra_data
+            collateral_event.notes = f'Deposit {collateral_event.amount} {collateral.symbol} as collateral in Frankencoin position {position}'  # noqa: E501
+            if owner_is_tracked and payer != owner:
+                collateral_event.notes += f' for {owner}'
+                collateral_event.location_label = owner
+        elif collateral_amount is not None and owner_is_tracked:
+            context.decoded_events.append(self.base.make_event_from_transaction(
+                transaction=context.transaction,
+                tx_log=context.tx_log,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_TO_PROTOCOL,
+                asset=collateral,
+                amount=collateral_amount,
+                location_label=owner,
+                notes=f'Deposit {collateral_amount} {collateral.symbol} as collateral in Frankencoin position {position} paid by {payer}',  # noqa: E501
+                counterparty=CPT_FRANKENCOIN,
+                address=position,
+                extra_data=extra_data,
+            ))
+
+        if position == original:
+            for event in reversed(context.decoded_events):
+                if (
+                    event.event_type == HistoryEventType.SPEND and
+                    event.event_subtype == HistoryEventSubType.NONE and
+                    event.asset == self.zchf and
+                    event.amount == token_normalized_value(OPENING_FEE_RAW, self.zchf)
+                ):
+                    event.event_subtype = HistoryEventSubType.FEE
+                    event.counterparty = CPT_FRANKENCOIN
+                    event.notes = (
+                        f'Pay {event.amount} zCHF to open Frankencoin position {position}'
+                    )
+                    event.extra_data = extra_data
+                    break
+
+        if owner_is_tracked is False:
+            return DEFAULT_EVM_DECODING_OUTPUT
+
+        return EvmDecodingOutput(events=[self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
+            event_type=HistoryEventType.INFORMATIONAL,
+            event_subtype=HistoryEventSubType.CREATE,
+            asset=collateral,
+            amount=ZERO,
+            location_label=owner,
+            notes=f'Create Frankencoin position {position}',
+            counterparty=CPT_FRANKENCOIN,
+            address=position,
+            extra_data=extra_data,
+        )])
 
     def _decode_mint(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode zCHF borrowed from a position."""
