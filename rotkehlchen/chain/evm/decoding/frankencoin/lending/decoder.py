@@ -1054,6 +1054,44 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         )
         return DEFAULT_EVM_DECODING_OUTPUT
 
+    def _maybe_enrich_clone_helper_mint(
+            self,
+            context: EnricherContext,
+    ) -> TransferEnrichmentOutput:
+        """Attribute zCHF forwarded by CloneHelper to the newly created position."""
+        if (
+            context.transaction.to_address != CLONE_HELPER_V2 or
+            context.token != self.zchf or
+            context.event.event_type != HistoryEventType.RECEIVE or
+            context.event.event_subtype != HistoryEventSubType.NONE or
+            len(context.tx_log.topics) != 3 or
+            context.tx_log.topics[0] != ERC20_OR_ERC721_TRANSFER or
+            bytes_to_address(context.tx_log.topics[1]) != CLONE_HELPER_V2 or
+            bytes_to_address(context.tx_log.topics[2]) != context.transaction.from_address
+        ):
+            return FAILED_ENRICHMENT_OUTPUT
+
+        # The helper is the temporary mint recipient. PositionOpened is the unambiguous link from
+        # its later user transfer to the position whose debt was created in this transaction.
+        opened_log = next((
+            tx_log for tx_log in context.all_logs
+            if len(tx_log.topics) == 3 and tx_log.topics[0] == POSITION_OPENED_TOPIC
+        ), None)
+        if opened_log is None:
+            return FAILED_ENRICHMENT_OUTPUT
+
+        position = bytes_to_address(opened_log.topics[2])
+        context.event.event_type = HistoryEventType.WITHDRAWAL
+        context.event.event_subtype = HistoryEventSubType.GENERATE_DEBT
+        context.event.notes = f'Generate {context.event.amount} zCHF debt from Frankencoin position {position}'  # noqa: E501
+        context.event.counterparty = CPT_FRANKENCOIN
+        context.event.address = position
+        context.event.extra_data = {POSITION_ADDRESS_KEY: position}
+        return TransferEnrichmentOutput(
+            matched_counterparty=CPT_FRANKENCOIN,
+            refresh_balances=True,
+        )
+
     def _maybe_enrich_collateral_deposit(
             self,
             context: EnricherContext,
@@ -1110,4 +1148,4 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         }
 
     def enricher_rules(self) -> list[Callable]:
-        return [self._maybe_enrich_collateral_deposit]
+        return [self._maybe_enrich_clone_helper_mint, self._maybe_enrich_collateral_deposit]
