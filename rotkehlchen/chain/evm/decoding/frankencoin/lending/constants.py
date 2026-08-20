@@ -48,7 +48,6 @@ OWNERSHIP_TRANSFERRED_TOPIC: Final = bytes.fromhex(
 
 # Selectors for calls made directly to dynamically-created PositionV2 contracts.
 ADJUST_POSITION_SELECTOR: Final = b'o\x87\x1c\xec'  # adjust(uint256,uint256,uint256)
-ADJUST_PRICE_SELECTOR: Final = b'r\xbf\x07\x9e'  # adjustPrice(uint256)
 # Clone a position for the transaction sender.
 CLONE_POSITION_SELECTOR: Final = bytes.fromhex('2e2c6314')
 # Clone a position while assigning another owner.
@@ -79,19 +78,7 @@ POSITION_V2_ABI: Final[ABI] = [
         'type': 'function',
     }, {
         'inputs': [],
-        'name': 'isClosed',
-        'outputs': [{'name': '', 'type': 'bool'}],
-        'stateMutability': 'view',
-        'type': 'function',
-    }, {
-        'inputs': [],
         'name': 'minted',
-        'outputs': [{'name': '', 'type': 'uint256'}],
-        'stateMutability': 'view',
-        'type': 'function',
-    }, {
-        'inputs': [],
-        'name': 'minimumCollateral',
         'outputs': [{'name': '', 'type': 'uint256'}],
         'stateMutability': 'view',
         'type': 'function',

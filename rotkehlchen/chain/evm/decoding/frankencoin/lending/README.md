@@ -24,8 +24,8 @@ after the registry check.
 ## Events shown in history
 
 The decoder covers opening originals, cloning (including CloneHelper), minting, repayment, combined
-collateral/debt adjustment, price adjustment, collateral withdrawal and closure, ownership transfer,
-direct collateral deposits, and rolling debt or collateral between positions.
+collateral/debt adjustment, collateral withdrawal, ownership transfer, and rolling debt or collateral
+between positions.
 
 The user-facing event sequence describes the economic action rather than every internal ERC20
 transfer. Important examples are:
@@ -34,15 +34,16 @@ transfer. Important examples are:
   zCHF minted to the protocol is not a user receive.
 - Repayment produces `SPEND/PAYBACK_DEBT` for the amount actually funded by the user. Reserve release
   can make the gross debt reduction larger than that spend.
-- `adjust()` can combine collateral and debt changes. Its events are ordered as collateral deposit,
-  debt mint or repayment, then collateral withdrawal.
+- `adjust()` can combine collateral and debt changes. Only asset movements are shown; changing a
+  position parameter without moving collateral or zCHF does not add history noise.
 - A roll uses a temporary flash mint internally. The history instead shows the source position's
   repayment/withdrawal and the target position's deposit/mint/fee.
 - CloneHelper forwarding and intermediate ownership transfers are folded into the clone operation.
 
-The position owner, collateral payer, zCHF recipient, repayer, and collateral recipient may be
-different addresses. Events are attributed to the tracked position owner while notes and transfer
-matching preserve the other party where relevant.
+Lifecycle events are decoded only for a tracked position owner. Explicit recipients and collateral
+payers during an open or adjustment are retained in notes when they differ from that owner. A
+standalone third-party repayment or collateral transfer remains ordinary ERC20 activity instead of
+being attributed to the owner.
 
 `MintingUpdate(collateral, price, minted)` reports the resulting totals, not deltas. The decoder uses
 those totals together with the transaction's ERC20 transfers and protocol logs. It transforms generic

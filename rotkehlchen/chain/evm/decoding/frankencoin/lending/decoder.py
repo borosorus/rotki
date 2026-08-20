@@ -15,7 +15,6 @@ from rotkehlchen.chain.evm.decoding.frankencoin.decoder import FrankencoinCommon
 from rotkehlchen.chain.evm.decoding.structures import (
     DEFAULT_EVM_DECODING_OUTPUT,
     FAILED_ENRICHMENT_OUTPUT,
-    ActionItem,
     EvmDecodingOutput,
     TransferEnrichmentOutput,
 )
@@ -27,7 +26,6 @@ from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import (
     ADJUST_POSITION_SELECTOR,
-    ADJUST_PRICE_SELECTOR,
     CLONE_HELPER_V2,
     CLONE_POSITION_FOR_SELECTOR,
     CLONE_POSITION_SELECTOR,
@@ -75,14 +73,11 @@ log = RotkehlchenLogsAdapter(logger)
 
 @dataclass(frozen=True)
 class FrankencoinPositionMetadata:
-    """Block-specific state shared by the position decoders."""
+    """Position data needed to attribute events at a historical block."""
 
     address: ChecksumEvmAddress
     owner: ChecksumEvmAddress
     collateral_token: EvmToken
-    minimum_collateral_raw: int
-    reserve_contribution: int
-    is_closed: bool
 
 
 @dataclass(frozen=True)
@@ -91,7 +86,6 @@ class FrankencoinMintDetails:
 
     usable_transfer: EvmTxReceiptLog
     usable_amount: FVal
-    gross_amount: FVal
     fee_log: EvmTxReceiptLog | None
     fee_amount: FVal
 
@@ -115,7 +109,6 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             encounter=TokenEncounterInfo(should_notify=False),
         )
         self.verified_positions: dict[ChecksumEvmAddress, EvmToken] = {}
-        self.position_immutables: dict[ChecksumEvmAddress, tuple[int, int]] = {}
 
     @staticmethod
     def _logs_for_current_operation(context: DecoderContext) -> list[EvmTxReceiptLog]:
@@ -180,8 +173,8 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         if len(mint_logs) == 0:
             return None
 
-        # mintWithReserve emits the usable mint first and the combined reserve/fee mint second.
-        # Their sum is the gross position debt increase; only the first transfer reaches the user.
+        # mintWithReserve emits the usable mint first. Later mints stay inside the protocol as
+        # reserve and fee accounting, so only this transfer is a user-facing debt event.
         usable_transfer = mint_logs[0]
         return FrankencoinMintDetails(
             usable_transfer=usable_transfer,
@@ -189,10 +182,6 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                 int.from_bytes(usable_transfer.data),
                 self.zchf,
             ),
-            gross_amount=sum((
-                token_normalized_value(int.from_bytes(tx_log.data), self.zchf)
-                for tx_log in mint_logs
-            ), start=ZERO),
             fee_log=fee_log,
             fee_amount=fee_amount,
         )
@@ -216,7 +205,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         """Authenticate a position address and query its state at the transaction block."""
         block_number = context.transaction.block_number
         cached_collateral = self.verified_positions.get(position)
-        cached_immutables = self.position_immutables.get(position)
+        position_contract = EvmContract(position, POSITION_V2_ABI)
         try:
             # Dynamic addresses are trusted only after checking the zCHF registry. Calls use the
             # transaction block so later ownership changes cannot rewrite historical attribution.
@@ -231,48 +220,17 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                 if parent != MINTING_HUB_V2:
                     return None
 
-                position_contract = EvmContract(position, POSITION_V2_ABI)
                 collateral = self.base.get_or_create_evm_token(address=position_contract.call(
                     node_inquirer=self.node_inquirer,
                     method_name='collateral',
                     block_identifier=block_number,
                 ))
-                minimum_collateral = position_contract.call(
-                    node_inquirer=self.node_inquirer,
-                    method_name='minimumCollateral',
-                    block_identifier=block_number,
-                )
-                reserve_contribution = position_contract.call(
-                    node_inquirer=self.node_inquirer,
-                    method_name='reserveContribution',
-                    block_identifier=block_number,
-                )
             else:
                 collateral = cached_collateral
-                if cached_immutables is None:
-                    position_contract = EvmContract(position, POSITION_V2_ABI)
-                    minimum_collateral = position_contract.call(
-                        node_inquirer=self.node_inquirer,
-                        method_name='minimumCollateral',
-                        block_identifier=block_number,
-                    )
-                    reserve_contribution = position_contract.call(
-                        node_inquirer=self.node_inquirer,
-                        method_name='reserveContribution',
-                        block_identifier=block_number,
-                    )
-                else:
-                    minimum_collateral, reserve_contribution = cached_immutables
 
-            position_contract = EvmContract(position, POSITION_V2_ABI)
             owner = position_contract.call(
                 node_inquirer=self.node_inquirer,
                 method_name='owner',
-                block_identifier=block_number,
-            )
-            is_closed = position_contract.call(
-                node_inquirer=self.node_inquirer,
-                method_name='isClosed',
                 block_identifier=block_number,
             )
         except (BlockchainQueryError, RemoteError) as e:
@@ -283,12 +241,8 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             address=position,
             owner=owner,
             collateral_token=collateral,
-            minimum_collateral_raw=minimum_collateral,
-            reserve_contribution=reserve_contribution,
-            is_closed=is_closed,
         )
         self.verified_positions[position] = collateral
-        self.position_immutables[position] = (minimum_collateral, reserve_contribution)
         return metadata
 
     def _decode_position_opened(self, context: DecoderContext) -> EvmDecodingOutput:
@@ -311,6 +265,9 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
 
         is_clone_helper = context.transaction.to_address == CLONE_HELPER_V2
         owner = context.transaction.from_address if is_clone_helper else emitted_owner
+        if self.base.is_tracked(owner) is False:
+            return DEFAULT_EVM_DECODING_OUTPUT
+
         transfer = self._get_previous_erc20_transfer(
             context=context,
             token=collateral,
@@ -319,10 +276,6 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         payer = context.transaction.from_address if is_clone_helper else (
             transfer.from_address if transfer is not None else emitted_owner
         )
-        owner_is_tracked = self.base.is_tracked(owner)
-        payer_is_tracked = self.base.is_tracked(payer)
-        if owner_is_tracked is False and payer_is_tracked is False:
-            return DEFAULT_EVM_DECODING_OUTPUT
 
         extra_data = {
             POSITION_ADDRESS_KEY: position,
@@ -343,10 +296,10 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             collateral_event.address = position
             collateral_event.extra_data = extra_data
             collateral_event.notes = f'Deposit {collateral_event.amount} {collateral.symbol} as collateral in Frankencoin position {position}'  # noqa: E501
-            if owner_is_tracked and payer != owner:
+            if payer != owner:
                 collateral_event.notes += f' for {owner}'
                 collateral_event.location_label = owner
-        elif collateral_amount is not None and owner_is_tracked:
+        elif collateral_amount is not None:
             context.decoded_events.append(self.base.make_event_from_transaction(
                 transaction=context.transaction,
                 tx_log=context.tx_log,
@@ -377,9 +330,6 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                     event.extra_data = extra_data
                     break
 
-        if owner_is_tracked is False:
-            return DEFAULT_EVM_DECODING_OUTPUT
-
         return EvmDecodingOutput(events=[self.base.make_event_from_transaction(
             transaction=context.transaction,
             tx_log=context.tx_log,
@@ -398,46 +348,26 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             self,
             context: DecoderContext,
             metadata: FrankencoinPositionMetadata,
-            defer_receive: bool = False,
-    ) -> tuple[list[EvmEvent], list[ActionItem]]:
+    ) -> list[EvmEvent]:
         """Decode one mint operation after the position has been authenticated."""
-        if (details := self._get_mint_details(context)) is None:
-            return [], []
+        if (
+            self.base.is_tracked(metadata.owner) is False or
+            (details := self._get_mint_details(context)) is None
+        ):
+            return []
 
         target = bytes_to_address(details.usable_transfer.topics[2])
-        owner_is_tracked = self.base.is_tracked(metadata.owner)
-        target_is_tracked = self.base.is_tracked(target)
-        if owner_is_tracked is False and target_is_tracked is False:
-            return [], []
-
         extra_data = {POSITION_ADDRESS_KEY: metadata.address}
-        new_events, action_items = [], []
+        new_events = []
         debt_event = self._find_event(
             context=context,
             event_type=HistoryEventType.RECEIVE,
             asset=self.zchf,
             amount=details.usable_amount,
         )
-        location_label = metadata.owner if owner_is_tracked else target
-        if debt_event is None and defer_receive:
-            # CloneHelper forwards the usable mint after MintingUpdate. Defer transformation until
-            # the generic receive exists instead of synthesizing a duplicate debt event now.
-            action_items.append(ActionItem(
-                action='transform',
-                from_event_type=HistoryEventType.RECEIVE,
-                from_event_subtype=HistoryEventSubType.NONE,
-                asset=self.zchf,
-                amount=details.usable_amount,
-                location_label=metadata.owner,
-                to_event_type=HistoryEventType.WITHDRAWAL,
-                to_event_subtype=HistoryEventSubType.GENERATE_DEBT,
-                to_notes=f'Generate {details.usable_amount} zCHF debt from Frankencoin position {metadata.address}',  # noqa: E501
-                to_counterparty=CPT_FRANKENCOIN,
-                to_address=metadata.address,
-                to_location_label=metadata.owner,
-                extra_data=extra_data,
-            ))
-        elif debt_event is None:
+        if debt_event is None and context.transaction.to_address != CLONE_HELPER_V2:
+            # CloneHelper receives the mint first and forwards it later in the transaction. Its
+            # dedicated transfer enricher handles that final receive without creating a duplicate.
             debt_event = self.base.make_event_from_transaction(
                 transaction=context.transaction,
                 tx_log=details.usable_transfer,
@@ -445,17 +375,17 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                 event_subtype=HistoryEventSubType.GENERATE_DEBT,
                 asset=self.zchf,
                 amount=details.usable_amount,
-                location_label=location_label,
+                location_label=metadata.owner,
                 notes=f'Generate {details.usable_amount} zCHF debt from Frankencoin position {metadata.address}',  # noqa: E501
                 counterparty=CPT_FRANKENCOIN,
                 address=metadata.address,
                 extra_data=extra_data,
             )
             new_events.append(debt_event)
-        else:
+        elif debt_event is not None:
             debt_event.event_type = HistoryEventType.WITHDRAWAL
             debt_event.event_subtype = HistoryEventSubType.GENERATE_DEBT
-            debt_event.location_label = location_label
+            debt_event.location_label = metadata.owner
             debt_event.counterparty = CPT_FRANKENCOIN
             debt_event.address = metadata.address
             debt_event.extra_data = extra_data
@@ -463,7 +393,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             if target != metadata.owner:
                 debt_event.notes += f' sent to {target}'
 
-        if owner_is_tracked and details.fee_amount > ZERO and details.fee_log is not None:
+        if details.fee_amount > ZERO and details.fee_log is not None:
             new_events.append(self.base.make_event_from_transaction(
                 transaction=context.transaction,
                 tx_log=details.fee_log,
@@ -478,7 +408,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                 extra_data=extra_data,
             ))
 
-        return new_events, action_items
+        return new_events
 
     def _decode_collateral_transfer(
             self,
@@ -495,8 +425,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         from_address = bytes_to_address(transfer_log.topics[1])
         to_address = bytes_to_address(transfer_log.topics[2])
         party = from_address if is_deposit else to_address
-        owner_is_tracked = self.base.is_tracked(metadata.owner)
-        if owner_is_tracked is False and self.base.is_tracked(party) is False:
+        if self.base.is_tracked(metadata.owner) is False:
             return None
 
         event_type = HistoryEventType.SPEND if is_deposit else HistoryEventType.RECEIVE
@@ -506,7 +435,6 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             asset=metadata.collateral_token,
             amount=amount,
         )
-        location_label = metadata.owner if owner_is_tracked else party
         protocol_event_type = HistoryEventType.DEPOSIT if is_deposit else HistoryEventType.WITHDRAWAL  # noqa: E501
         protocol_event_subtype = (
             HistoryEventSubType.DEPOSIT_TO_PROTOCOL
@@ -527,7 +455,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                 event_subtype=protocol_event_subtype,
                 asset=metadata.collateral_token,
                 amount=amount,
-                location_label=location_label,
+                location_label=metadata.owner,
                 notes=notes,
                 counterparty=CPT_FRANKENCOIN,
                 address=metadata.address,
@@ -537,7 +465,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         else:
             event.event_type = protocol_event_type
             event.event_subtype = protocol_event_subtype
-            event.location_label = location_label
+            event.location_label = metadata.owner
             event.notes = notes
             event.counterparty = CPT_FRANKENCOIN
             event.address = metadata.address
@@ -550,25 +478,14 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         if (metadata := self._get_position_metadata(context, MINTING_UPDATE_TOPIC)) is None:
             return DEFAULT_EVM_DECODING_OUTPUT
 
-        events, action_items = self._decode_mint_activity(context, metadata)
-        return EvmDecodingOutput(events=events, action_items=action_items)
+        return EvmDecodingOutput(events=self._decode_mint_activity(context, metadata))
 
     def _decode_clone_update(self, context: DecoderContext) -> EvmDecodingOutput:
-        """Decode a clone's optional mint and CloneHelper's optional price change."""
+        """Decode the debt optionally generated while cloning a position."""
         if (metadata := self._get_position_metadata(context, MINTING_UPDATE_TOPIC)) is None:
             return DEFAULT_EVM_DECODING_OUTPUT
 
-        events, action_items = self._decode_mint_activity(
-            context=context,
-            metadata=metadata,
-            defer_receive=context.transaction.to_address == CLONE_HELPER_V2,
-        )
-        if len(events) != 0 or len(action_items) != 0:
-            return EvmDecodingOutput(events=events, action_items=action_items)
-
-        if context.transaction.to_address == CLONE_HELPER_V2:
-            return self._make_price_adjustment_event(context, metadata)
-        return DEFAULT_EVM_DECODING_OUTPUT
+        return EvmDecodingOutput(events=self._decode_mint_activity(context, metadata))
 
     def _decode_repay(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode zCHF supplied to reduce position debt."""
@@ -589,8 +506,9 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
 
         payer = bytes_to_address(repayment_transfer.topics[1])
         amount = token_normalized_value(int.from_bytes(repayment_transfer.data), self.zchf)
-        owner_is_tracked = self.base.is_tracked(metadata.owner)
-        if owner_is_tracked is False and self.base.is_tracked(payer) is False:
+        # A repayment is a spend by its payer. Decode it as position activity only when the
+        # tracked owner pays their own debt; third-party transfers retain generic ERC20 semantics.
+        if payer != metadata.owner or self.base.is_tracked(metadata.owner) is False:
             return DEFAULT_EVM_DECODING_OUTPUT
 
         repayment_event = self._find_event(
@@ -599,10 +517,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             asset=self.zchf,
             amount=amount,
         )
-        location_label = metadata.owner if owner_is_tracked else payer
         notes = f'Repay {amount} zCHF debt to Frankencoin position {metadata.address}'
-        if payer != metadata.owner:
-            notes += f' paid by {payer}'
         if repayment_event is None:
             repayment_event = self.base.make_event_from_transaction(
                 transaction=context.transaction,
@@ -611,7 +526,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                 event_subtype=HistoryEventSubType.PAYBACK_DEBT,
                 asset=self.zchf,
                 amount=amount,
-                location_label=location_label,
+                location_label=metadata.owner,
                 notes=notes,
                 counterparty=CPT_FRANKENCOIN,
                 address=metadata.address,
@@ -620,7 +535,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             return EvmDecodingOutput(events=[repayment_event])
 
         repayment_event.event_subtype = HistoryEventSubType.PAYBACK_DEBT
-        repayment_event.location_label = location_label
+        repayment_event.location_label = metadata.owner
         repayment_event.notes = notes
         repayment_event.counterparty = CPT_FRANKENCOIN
         repayment_event.address = metadata.address
@@ -628,7 +543,7 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_adjust(self, context: DecoderContext) -> EvmDecodingOutput:
-        """Decode the collateral, debt, and price changes made by adjust()."""
+        """Decode the collateral and debt changes made by adjust()."""
         if (metadata := self._get_position_metadata(context, MINTING_UPDATE_TOPIC)) is None:
             return DEFAULT_EVM_DECODING_OUTPUT
 
@@ -722,44 +637,13 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
                 repayment_event.address = metadata.address
                 repayment_event.extra_data = {POSITION_ADDRESS_KEY: metadata.address}
 
-        mint_events, action_items = self._decode_mint_activity(context, metadata)
+        mint_events = self._decode_mint_activity(context, metadata)
         context.decoded_events.extend(mint_events)
         maybe_reshuffle_events(
             ordered_events=[collateral_deposit, *mint_events, repayment_event, collateral_withdrawal],  # noqa: E501
             events_list=context.decoded_events,
         )
-        return EvmDecodingOutput(action_items=action_items)
-
-    def _decode_price_adjustment(self, context: DecoderContext) -> EvmDecodingOutput:
-        """Decode a price-only position update."""
-        if (metadata := self._get_position_metadata(context, MINTING_UPDATE_TOPIC)) is None:
-            return DEFAULT_EVM_DECODING_OUTPUT
-
-        return self._make_price_adjustment_event(context, metadata)
-
-    def _make_price_adjustment_event(
-            self,
-            context: DecoderContext,
-            metadata: FrankencoinPositionMetadata,
-    ) -> EvmDecodingOutput:
-        """Create the user-facing informational event for a price-only update."""
-
-        if self.base.is_tracked(metadata.owner) is False:
-            return DEFAULT_EVM_DECODING_OUTPUT
-
-        return EvmDecodingOutput(events=[self.base.make_event_from_transaction(
-            transaction=context.transaction,
-            tx_log=context.tx_log,
-            event_type=HistoryEventType.INFORMATIONAL,
-            event_subtype=HistoryEventSubType.UPDATE,
-            asset=metadata.collateral_token,
-            amount=ZERO,
-            location_label=metadata.owner,
-            notes=f'Update liquidation price of Frankencoin position {metadata.address}',
-            counterparty=CPT_FRANKENCOIN,
-            address=metadata.address,
-            extra_data={POSITION_ADDRESS_KEY: metadata.address},
-        )])
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_collateral_withdrawal(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode collateral withdrawn from a position."""
@@ -776,33 +660,13 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         if transfer_log is None:
             return DEFAULT_EVM_DECODING_OUTPUT
 
-        withdrawal_event = self._decode_collateral_transfer(
+        self._decode_collateral_transfer(
             context=context,
             metadata=metadata,
             transfer_log=transfer_log,
             is_deposit=False,
         )
-        new_events = []
-        if metadata.is_closed and self.base.is_tracked(metadata.owner):
-            new_events.append(self.base.make_event_from_transaction(
-                transaction=context.transaction,
-                tx_log=context.tx_log,
-                event_type=HistoryEventType.INFORMATIONAL,
-                event_subtype=HistoryEventSubType.UPDATE,
-                asset=metadata.collateral_token,
-                amount=ZERO,
-                location_label=metadata.owner,
-                notes=f'Close Frankencoin position {metadata.address}',
-                counterparty=CPT_FRANKENCOIN,
-                address=metadata.address,
-                extra_data={POSITION_ADDRESS_KEY: metadata.address},
-            ))
-        if withdrawal_event is not None:
-            maybe_reshuffle_events(
-                ordered_events=[withdrawal_event, *new_events],
-                events_list=context.decoded_events,
-            )
-        return EvmDecodingOutput(events=new_events)
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_ownership_transfer(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode ownership transferred between tracked and untracked addresses."""
@@ -854,12 +718,10 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         ):
             return DEFAULT_EVM_DECODING_OUTPUT
 
-        user = context.transaction.from_address
-        if all(self.base.is_tracked(address) is False for address in (
-            user,
-            source_metadata.owner,
-            target_metadata.owner,
-        )):
+        # A roll represents one owner's position migration. Avoid attributing wrapper or
+        # third-party activity to a tracked caller when the actual position owners differ.
+        user = source_metadata.owner
+        if target_metadata.owner != user or self.base.is_tracked(user) is False:
             return DEFAULT_EVM_DECODING_OUTPUT
 
         # The roller flash-mints zCHF internally. The Roll values describe the durable source and
@@ -1092,33 +954,6 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
             refresh_balances=True,
         )
 
-    def _maybe_enrich_collateral_deposit(
-            self,
-            context: EnricherContext,
-    ) -> TransferEnrichmentOutput:
-        """Identify collateral transferred directly to a position."""
-        if context.tx_log.topics[0] != ERC20_OR_ERC721_TRANSFER:
-            return FAILED_ENRICHMENT_OUTPUT
-
-        position = bytes_to_address(context.tx_log.topics[2])
-        if (
-            context.event.event_type != HistoryEventType.SPEND or
-            context.event.event_subtype != HistoryEventSubType.NONE or
-            self.verified_positions.get(position) != context.token
-        ):
-            return FAILED_ENRICHMENT_OUTPUT
-
-        context.event.event_type = HistoryEventType.DEPOSIT
-        context.event.event_subtype = HistoryEventSubType.DEPOSIT_TO_PROTOCOL
-        context.event.notes = f'Deposit {context.event.amount} {context.token.symbol} as collateral in Frankencoin position {position}'  # noqa: E501
-        context.event.counterparty = CPT_FRANKENCOIN
-        context.event.address = position
-        context.event.extra_data = {POSITION_ADDRESS_KEY: position}
-        return TransferEnrichmentOutput(
-            matched_counterparty=CPT_FRANKENCOIN,
-            refresh_balances=True,
-        )
-
     # -- DecoderInterface methods
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
@@ -1130,7 +965,6 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
     def decoding_by_input_data(self) -> dict[bytes, dict[bytes, Callable]]:
         return {
             ADJUST_POSITION_SELECTOR: {MINTING_UPDATE_TOPIC: self._decode_adjust},
-            ADJUST_PRICE_SELECTOR: {MINTING_UPDATE_TOPIC: self._decode_price_adjustment},
             CLONE_POSITION_SELECTOR: {MINTING_UPDATE_TOPIC: self._decode_clone_update},
             CLONE_POSITION_FOR_SELECTOR: {MINTING_UPDATE_TOPIC: self._decode_clone_update},
             CLONE_WITH_PRICE_SELECTOR: {MINTING_UPDATE_TOPIC: self._decode_clone_update},
@@ -1148,4 +982,4 @@ class FrankencoinLendingDecoder(FrankencoinCommonDecoder):
         }
 
     def enricher_rules(self) -> list[Callable]:
-        return [self._maybe_enrich_clone_helper_mint, self._maybe_enrich_collateral_deposit]
+        return [self._maybe_enrich_clone_helper_mint]

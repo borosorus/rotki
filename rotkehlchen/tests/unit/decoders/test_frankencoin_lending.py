@@ -37,6 +37,13 @@ BOSS = 'eip155:1/erc20:0x2E880962A9609aA3eab4DEF919FE9E917E99073B'
 ExpectedEvent = tuple[HistoryEventType, HistoryEventSubType, str, str, str, str]
 
 
+def _get_position_address(event: EvmEvent) -> str:
+    """Read the position field that every Frankencoin lending event must provide."""
+    assert event.extra_data is not None
+    assert isinstance(position := event.extra_data.get(POSITION_ADDRESS_KEY), str)
+    return position
+
+
 def _decode_and_check(
         ethereum_inquirer: EthereumInquirer,
         tx_hash: str,
@@ -53,10 +60,10 @@ def _decode_and_check(
         (
             event.event_type,
             event.event_subtype,
-            event.asset.identifier,
-            event.amount,
-            event.notes,
-            event.extra_data[POSITION_ADDRESS_KEY],
+                event.asset.identifier,
+                event.amount,
+                event.notes,
+                _get_position_address(event),
         )
         for event in protocol_events
     ] == [
@@ -188,14 +195,6 @@ def test_clone_position_with_helper(ethereum_inquirer, ethereum_accounts):
                 position,
             ),
             (
-                HistoryEventType.INFORMATIONAL,
-                HistoryEventSubType.UPDATE,
-                PAXG,
-                '0',
-                f'Update liquidation price of Frankencoin position {position}',
-                position,
-            ),
-            (
                 HistoryEventType.WITHDRAWAL,
                 HistoryEventSubType.GENERATE_DEBT,
                 ZCHF,
@@ -223,32 +222,6 @@ def test_repay_position(ethereum_inquirer, ethereum_accounts):
                 ZCHF,
                 '447.888289509090866386',
                 f'Repay 447.888289509090866386 zCHF debt to Frankencoin position {position}',
-                position,
-            ),
-        ],
-    )
-
-
-@pytest.mark.vcr(filter_query_parameters=['apikey'])
-@pytest.mark.parametrize('ethereum_accounts', [['0xe04415142De52C30bC014b74c43a65aDB41759b5']])
-def test_repay_position_by_third_party(ethereum_inquirer, ethereum_accounts):
-    """Attribute a repayment to the tracked owner even when another address supplies zCHF."""
-    position = '0xf73FB8eEAe2E4fA781855d7C1a2977798Ec6839c'
-    payer = '0x045a8395FE21CE34f0eC34d242c342ade4Ded5be'
-    _decode_and_check(
-        ethereum_inquirer=ethereum_inquirer,
-        tx_hash='0xa0a89e3fd7d3d6ab2c44fee89479d69b836996e0b185524874c44ddbcbbcc697',
-        user_address=ethereum_accounts[0],
-        expected=[
-            (
-                HistoryEventType.SPEND,
-                HistoryEventSubType.PAYBACK_DEBT,
-                ZCHF,
-                '0.000000000000000001',
-                (
-                    f'Repay 0.000000000000000001 zCHF debt to Frankencoin position '
-                    f'{position} paid by {payer}'
-                ),
                 position,
             ),
         ],
@@ -327,29 +300,8 @@ def test_adjust_position_withdraw_and_repay(ethereum_inquirer, ethereum_accounts
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
-@pytest.mark.parametrize('ethereum_accounts', [['0x1C6920108e0376d88fF21FBC5FFBCa8C6E0e5cBa']])
-def test_adjust_position_price(ethereum_inquirer, ethereum_accounts):
-    position = '0x2Adf6E475fAaf211FBb5cE9F1CFed728f90a830A'
-    _decode_and_check(
-        ethereum_inquirer=ethereum_inquirer,
-        tx_hash='0xc09b5a982e9f44626aea2b73ea63861e86e3b2daba3b8926dae42379e842a967',
-        user_address=ethereum_accounts[0],
-        expected=[
-            (
-                HistoryEventType.INFORMATIONAL,
-                HistoryEventSubType.UPDATE,
-                CBBTC,
-                '0',
-                f'Update liquidation price of Frankencoin position {position}',
-                position,
-            ),
-        ],
-    )
-
-
-@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0xEe933dca1Eea67C12102cF8EA3fbf2A16eC536fa']])
-def test_close_position_by_withdrawing_collateral(ethereum_inquirer, ethereum_accounts):
+def test_withdraw_position_collateral(ethereum_inquirer, ethereum_accounts):
     position = '0x53A3036B1b5450071eB404d671c1AD75866b32fa'
     _decode_and_check(
         ethereum_inquirer=ethereum_inquirer,
@@ -362,14 +314,6 @@ def test_close_position_by_withdrawing_collateral(ethereum_inquirer, ethereum_ac
                 WETH,
                 '2',
                 f'Withdraw 2 WETH collateral from Frankencoin position {position}',
-                position,
-            ),
-            (
-                HistoryEventType.INFORMATIONAL,
-                HistoryEventSubType.UPDATE,
-                WETH,
-                '0',
-                f'Close Frankencoin position {position}',
                 position,
             ),
         ],
