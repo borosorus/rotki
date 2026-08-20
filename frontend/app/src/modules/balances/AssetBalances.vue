@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import type { AssetBalance, AssetBalanceWithPrice, BigNumber, Nullable } from '@rotki/common';
+import type { AssetBalanceWithPrice, BigNumber } from '@rotki/common';
 import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
+import type { AssetBreakdownOptions } from '@/modules/balances/types/balances';
 import { some } from 'es-toolkit/compat';
 import { AssetValueDisplay, FiatDisplay, ValueDisplay } from '@/modules/assets/amount-display/components';
 import AssetDetails from '@/modules/assets/AssetDetails.vue';
 import { isEvmNativeToken } from '@/modules/assets/types';
+import { useAssetBalanceSearch } from '@/modules/assets/use-asset-balance-search';
 import { useAssetSelectInfo } from '@/modules/assets/use-asset-select-info';
 import BalanceTopProtocols from '@/modules/balances/protocols/BalanceTopProtocols.vue';
 import AssetRowDetails from '@/modules/balances/protocols/components/AssetRowDetails.vue';
 import { bigNumberSum, calculatePercentage } from '@/modules/core/common/data/calculation';
-import { assetFilterByKeyword } from '@/modules/core/common/display/assets';
 import { sortAssetBalances } from '@/modules/core/common/display/balances';
 import { TableColumn } from '@/modules/core/table/table-column';
 import { TableId, useRememberTableSorting } from '@/modules/core/table/use-remember-table-sorting';
@@ -26,12 +27,9 @@ const search = defineModel<string>('search', { default: '', required: false });
 const selected = defineModel<string[] | undefined>('selected', { required: false });
 
 const {
-  allBreakdown = false,
   balances,
-  details,
-  hideBreakdown = false,
+  breakdown,
   hideTotal = false,
-  isLiability = false,
   loading = false,
   selectionMode = false,
   showPerProtocol = false,
@@ -39,16 +37,10 @@ const {
   visibleColumns = [],
 } = defineProps<{
   balances: AssetBalanceWithPrice[];
-  details?: {
-    groupId?: string;
-    chains?: string[];
-  };
+  breakdown?: AssetBreakdownOptions;
   loading?: boolean;
   hideTotal?: boolean;
-  hideBreakdown?: boolean;
   stickyHeader?: boolean;
-  isLiability?: boolean;
-  allBreakdown?: boolean;
   visibleColumns?: TableColumn[];
   showPerProtocol?: boolean;
   selectionMode?: boolean;
@@ -65,6 +57,7 @@ const sort = ref<DataTableSortData<AssetBalanceWithPrice>>({
 const debouncedSearch = refDebounced(search, 200);
 
 const { getAssetInfo } = useAssetSelectInfo();
+const { matches, prioritizeExactMatches } = useAssetBalanceSearch(() => balances, debouncedSearch);
 const currencySymbol = useSetting('currencySymbol');
 const statistics = useStatisticsStore();
 const { totalNetWorth } = storeToRefs(statistics);
@@ -73,7 +66,7 @@ const isExpanded = (asset: string) => some(get(expanded), { asset });
 
 function shouldShowRowExpander(row: AssetBalanceWithPrice): boolean {
   const hasBreakdown = Boolean(row.breakdown);
-  const shouldShowNativeBreakdown = (!hideBreakdown && isEvmNativeToken(row.asset)) ?? false;
+  const shouldShowNativeBreakdown = (!breakdown?.hide && isEvmNativeToken(row.asset)) ?? false;
   const hasPerProtocolDetails = (row.perProtocol && row.perProtocol.length > 1) ?? false;
   return hasBreakdown || shouldShowNativeBreakdown || hasPerProtocolDetails;
 }
@@ -82,13 +75,7 @@ function expand(item: AssetBalanceWithPrice) {
   set(expanded, isExpanded(item.asset) ? [] : [item]);
 }
 
-function assetFilter(item: Nullable<AssetBalance>): boolean {
-  return assetFilterByKeyword(item, get(debouncedSearch), getAssetInfo);
-}
-
-const filteredBalances = computed(() => balances.filter(assetFilter));
-
-const total = computed<BigNumber>(() => bigNumberSum(get(filteredBalances).map(({ value }) => value)));
+const total = computed<BigNumber>(() => bigNumberSum(get(matches).map(({ value }) => value)));
 
 function percentageOfTotalNetValue(val: BigNumber): string {
   return calculatePercentage(val, get(totalNetWorth));
@@ -179,7 +166,8 @@ const rowAppendLabelColspan = computed(() => {
 
 useRememberTableSorting<AssetBalanceWithPrice>(TableId.ASSET_BALANCES, sort, tableHeaders);
 
-const sorted = computed<AssetBalanceWithPrice[]>(() => sortAssetBalances([...get(filteredBalances)], get(sort), getAssetInfo));
+const sorted = computed<AssetBalanceWithPrice[]>(() =>
+  prioritizeExactMatches(sortAssetBalances([...get(matches)], get(sort), getAssetInfo)));
 </script>
 
 <template>
@@ -201,7 +189,7 @@ const sorted = computed<AssetBalanceWithPrice[]>(() => sortAssetBalances([...get
     <template #item.asset="{ row }">
       <AssetDetails
         :asset="row.asset"
-        :is-collection-parent="!!row.breakdown"
+        :resolution="{ isCollectionParent: !!row.breakdown }"
       />
     </template>
     <template #item.perProtocol="{ row }">
@@ -259,11 +247,8 @@ const sorted = computed<AssetBalanceWithPrice[]>(() => sortAssetBalances([...get
     <template #expanded-item="{ row }">
       <AssetRowDetails
         :row="row"
-        :details="details"
         :loading="loading"
-        :is-liability="isLiability"
-        :all-breakdown="allBreakdown"
-        :hide-breakdown="hideBreakdown"
+        :breakdown="breakdown"
       />
     </template>
     <template #item.expand="{ row }">

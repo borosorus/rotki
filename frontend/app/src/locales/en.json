@@ -1813,9 +1813,7 @@
     "refresh_tooltip": "Refresh Binance market pairs"
   },
   "blockchain_account_selector": {
-    "all": "all",
     "default_label": "Filter account(s)",
-    "hint": "Showing results across {hintText} accounts.",
     "no_data": "No more usable addresses"
   },
   "blockchain_balances": {
@@ -5971,7 +5969,12 @@
       "narrow": "Filter…",
       "narrow_empty": "No matches",
       "remove": "Remove filter",
-      "search": "Filter by…"
+      "search": "Filter by…",
+      "syntax": {
+        "date_keywords": "date time when period since after before until",
+        "label": "Type directly:",
+        "range_keywords": "amount number value range more less over under above below at least at most"
+      }
     },
     "saved_views": {
       "actions": {
@@ -6235,6 +6238,9 @@
       "title": "rotki Browser Wallet Bridge",
       "wallet_status": "Wallet Status"
     },
+    "errors": {
+      "rejected": "Request is rejected by user"
+    },
     "never_interacted": "You have never interacted with this address before.",
     "recent_transactions": {
       "no_data": "No recent transactions",
@@ -6248,9 +6254,13 @@
       "tracked_addresses": "Tracked Addresses"
     },
     "select_asset": {
+      "asset_count": "{count} asset | {count} assets",
       "balance": "Balance",
       "max": "Max",
       "no_assets_found": "No assets found",
+      "no_search_results": "No assets match \"{query}\"",
+      "result_count": "{count} of {total}",
+      "search": "Search by symbol or name",
       "select_token": "Select a token",
       "title": "Select Asset"
     },

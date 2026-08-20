@@ -102,6 +102,7 @@ describe('modules/wallet/use-wallet-store', () => {
       transactionManager: {
         handleTransactionSuccess: vi.fn(async () => {}),
         recentTransactions: ref([]),
+        reset: vi.fn(),
         updateTransactionStatus: vi.fn(),
       },
       unifiedProviders: {
@@ -130,6 +131,23 @@ describe('modules/wallet/use-wallet-store', () => {
     expect(get(store.walletMode)).toBe(WALLET_MODES.LOCAL_BRIDGE);
     expect(get(store.connected)).toBe(false);
     expect(get(store.isWalletConnect)).toBe(false);
+  });
+
+  it('should not clear the selected provider when the store is created', async () => {
+    await getStore();
+    await nextTick();
+
+    expect(providers().clearProvider).not.toHaveBeenCalled();
+  });
+
+  it('should disconnect when the wallet mode changes', async () => {
+    const store = await getStore();
+
+    store.walletMode = WALLET_MODES.WALLET_CONNECT;
+    await nextTick();
+    // back to local bridge, the mode disconnect() clears the provider for
+    store.walletMode = WALLET_MODES.LOCAL_BRIDGE;
+    await vi.waitFor(() => expect(providers().clearProvider).toHaveBeenCalledTimes(1));
   });
 
   it('should reflect walletconnect mode in isWalletConnect', async () => {
@@ -214,6 +232,67 @@ describe('modules/wallet/use-wallet-store', () => {
       expect(providers().clearProvider).toHaveBeenCalled();
       expect(get(store.connected)).toBe(false);
       expect(get(store.isDisconnecting)).toBe(false);
+    });
+
+    it('should forget the remembered provider on a deliberate disconnect', async () => {
+      const store = await getStore();
+      await store.connect();
+
+      await store.disconnect();
+
+      expect(providers().clearProvider).toHaveBeenCalledWith({ forget: true });
+    });
+  });
+
+  describe('disconnectWalletIfActive', () => {
+    it('should not create the store when it does not exist yet', async () => {
+      const { disconnectWalletIfActive } = await import('./use-wallet-store');
+
+      await disconnectWalletIfActive();
+
+      expect(providers().clearProvider).not.toHaveBeenCalled();
+      expect(injected().disconnect).not.toHaveBeenCalled();
+    });
+
+    it('should disconnect when the store already exists', async () => {
+      const { disconnectWalletIfActive } = await import('./use-wallet-store');
+      const store = await getStore();
+      await store.connect(); // initialise the injected instance
+
+      await disconnectWalletIfActive();
+
+      expect(injected().disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it('should keep the remembered provider so the next login can restore it', async () => {
+      const { disconnectWalletIfActive } = await import('./use-wallet-store');
+      const store = await getStore();
+      await store.connect();
+
+      await disconnectWalletIfActive();
+
+      expect(providers().clearProvider).toHaveBeenCalledWith({ forget: false });
+    });
+  });
+
+  describe('reset', () => {
+    it('should clear the connection state and the recent transactions', async () => {
+      const store = await getStore();
+      await store.connect();
+
+      store.reset();
+
+      expect(get(store.connected)).toBe(false);
+      expect(get(store.connectedAddress)).toBeUndefined();
+      expect(mocks.state.transactionManager.reset).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not expose the recent transactions as patchable state', async () => {
+      const store = await getStore();
+
+      // they are a getter over the transaction manager's readonly ref, so the store
+      // reset plugin must not try to `$patch` them
+      expect(store.$state).not.toHaveProperty('recentTransactions');
     });
   });
 
